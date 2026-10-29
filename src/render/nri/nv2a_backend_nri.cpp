@@ -6,7 +6,9 @@
 #include "Extensions/NRIDeviceCreation.h"
 #include "Extensions/NRISwapChain.h"
 #include <windows.h>
-#include "nri_d3d11.h"
+#undef ERROR // Win32 macro conflicts with nri::Message::ERROR.
+#include "nri_imgui.h"
+#include "nri_shaders.h"
 #include <mmsystem.h>
 #include <algorithm>
 #include <array>
@@ -45,6 +47,7 @@ namespace
 	struct Texture
 	{
 		nri::Texture *object = nullptr;
+		nri::Fence *present_ready = nullptr;
 		nri::Descriptor *view = nullptr;
 		nri::Descriptor *sample_view = nullptr;
 		unsigned mips = 1;
@@ -60,10 +63,13 @@ namespace
 	struct Frame
 	{
 		nri::CommandAllocator *allocator = nullptr;
+		nri::Fence *image_acquired = nullptr;
 		nri::CommandBuffer *commands = nullptr;
 		std::vector<nri::CommandBuffer *> chunks;
 		unsigned chunk_index = 0, chunk_draws = 0;
 		nri::DescriptorPool *descriptors = nullptr;
+		std::vector<nri::DescriptorPool*> descriptor_pools;
+		unsigned descriptor_pool_index = 0, descriptor_sets_used = 0;
 		
 		uint64_t completed = 0;
 		
@@ -89,12 +95,14 @@ namespace
 	static_assert(sizeof(Constants) == 48);
 	static_assert(sizeof(Nv2aVertex) == 28);
 
+	nri::GraphicsAPI active_api = nri::GraphicsAPI::D3D11;
+	const char* api_name = "D3D11";
 	nri::CoreInterface core = {};
 	nri::SwapChainInterface presentation = {};
 	nri::Device *device;
 	nri::Queue *queue;
 	nri::SwapChain *swapchain;
-	nri::Fence *fence, *acquire, *release;
+	nri::Fence *fence;
 	nri::PipelineLayout *layout;
 	nri::Pipeline *present_pipeline, *fxaa_pipeline, *ssaa_pipeline;
 	nri::Descriptor *samplers[8] = {}; // nearest, bilinear, trilinear, aniso 2/4/8/16, presentation
@@ -149,8 +157,12 @@ namespace
 			                         + std::to_string((unsigned)result) + ")");
 	}
 
+	unsigned validation_errors;
+	void NRI_CALL abort_execution(void*) {} // Log errors; callers handle NRI result codes.
+
 	void NRI_CALL message(nri::Message severity, const char *file, uint32_t line, const char *text, void *)
 	{
+		if (severity == nri::Message::ERROR) ++validation_errors;
 		std::fprintf(stderr, "[NRI:%u] %s (%s:%u)\n", (unsigned)severity, text, file, line);
 		std::fflush(stderr);
 	}
@@ -184,7 +196,7 @@ namespace
 	// disabled, NRI/D3D11 records CPU opcodes; a whole-frame submission defers
 	// all native draw execution until flip, creating a scene-dependent burst.
 	// Each chunk has its own command buffer, retained until the frame fence.
-	void submit_commands()
+	void submit_commands(nri::Fence* acquired = nullptr, nri::Fence* ready = nullptr)
 	{
 		end_rendering();
 		check(core.EndCommandBuffer(*frame->commands), "End command chunk");
@@ -192,6 +204,18 @@ namespace
 		nri::QueueSubmitDesc submit = {};
 		submit.commandBuffers = &frame->commands;
 		submit.commandBufferNum = 1;
+        nri::FenceSubmitDesc wait = {acquired, 0, nri::StageBits::ALL};
+        nri::FenceSubmitDesc signals[2] = {
+            {ready, 0, nri::StageBits::ALL},
+            {fence, frame_number + 1, nri::StageBits::ALL}
+        };
+        if (acquired) {
+            submit.waitFences = &wait;
+            submit.waitFenceNum = 1;
+            submit.signalFences = signals;
+            submit.signalFenceNum = 2;
+        }
+
 		
 		LARGE_INTEGER start, end;
 		QueryPerformanceCounter(&start);
@@ -642,9 +666,9 @@ namespace
 		ld.shaderStages = constants.shaderStages;
 		check(core.CreatePipelineLayout(*device, ld, layout), "Create pipeline layout");
 
-		auto vs = doa1u::d3d11::compile(HLSL_VS, "vs_5_0");
-		auto tex = doa1u::d3d11::compile(HLSL_PS_TEX, "ps_5_0");
-		auto flat = doa1u::d3d11::compile(HLSL_PS_FLAT, "ps_5_0");
+		auto vs = doa1u::compile_shader(active_api, HLSL_VS, "vs_5_0");
+		auto tex = doa1u::compile_shader(active_api, HLSL_PS_TEX, "ps_5_0");
+		auto flat = doa1u::compile_shader(active_api, HLSL_PS_FLAT, "ps_5_0");
 		
 		nri::VertexAttributeDesc attributes[3] = {};
 		attributes[0].d3d.semanticName = "POSITION";
@@ -716,7 +740,7 @@ namespace
 			"Texture2D t:register(t0);SamplerState s:register(s0);"
 			"float4 main(float4 p:SV_Position,float2 uv:TEXCOORD):SV_Target{return t.SampleLevel(s,uv,0);}";
 			
-		auto pvs = doa1u::d3d11::compile(present_vs, "vs_5_0"), pps = doa1u::d3d11::compile(present_ps, "ps_5_0");
+		auto pvs = doa1u::compile_shader(active_api, present_vs, "vs_5_0"), pps = doa1u::compile_shader(active_api, present_ps, "ps_5_0");
 		nri::ShaderDesc shaders[2] = {
 			{nri::StageBits::VERTEX_SHADER, pvs.data(), pvs.size(), "main"},
 			{nri::StageBits::FRAGMENT_SHADER, pps.data(), pps.size(), "main"}};
@@ -734,7 +758,7 @@ namespace
 		pd.shaders = shaders;
 		pd.shaderNum = 2;
 		check(core.CreateGraphicsPipeline(*device, pd, present_pipeline), "Create presentation pipeline");
-		auto fxaa = doa1u::d3d11::compile(HLSL_FXAA, "ps_5_0"), ssaa = doa1u::d3d11::compile(HLSL_SSAA, "ps_5_0");
+		auto fxaa = doa1u::compile_shader(active_api, HLSL_FXAA, "ps_5_0"), ssaa = doa1u::compile_shader(active_api, HLSL_SSAA, "ps_5_0");
 		shaders[1] = {nri::StageBits::FRAGMENT_SHADER, fxaa.data(), fxaa.size(), "main"};
 		check(core.CreateGraphicsPipeline(*device, pd, fxaa_pipeline), "Create FXAA pipeline");
 		shaders[1] = {nri::StageBits::FRAGMENT_SHADER, ssaa.data(), ssaa.size(), "main"};
@@ -744,8 +768,24 @@ namespace
 
 	void bind_image(nri::Descriptor *view, unsigned sampler)
 	{
-		nri::DescriptorSet *set = nullptr;
-		check(core.AllocateDescriptorSets(*frame->descriptors, *layout, 0, &set, 1, 0), "Allocate image descriptor set");
+        // D3D12 shader-visible sampler heaps are limited to 2048 entries.
+        // Grow in bounded pools, retaining all pools until this frame completes.
+        if (frame->descriptor_sets_used == 1024) {
+            ++frame->descriptor_pool_index;
+            if (frame->descriptor_pool_index == frame->descriptor_pools.size()) {
+                nri::DescriptorPoolDesc desc = {};
+                desc.descriptorSetMaxNum = desc.textureMaxNum = desc.samplerMaxNum = 1024;
+                nri::DescriptorPool* pool = nullptr;
+                check(core.CreateDescriptorPool(*device, desc, pool), "Grow descriptor pools");
+                frame->descriptor_pools.push_back(pool);
+            }
+            frame->descriptors = frame->descriptor_pools[frame->descriptor_pool_index];
+            frame->descriptor_sets_used = 0;
+            core.CmdSetDescriptorPool(*frame->commands, *frame->descriptors);
+        }
+        ++frame->descriptor_sets_used;
+        nri::DescriptorSet *set = nullptr;
+        check(core.AllocateDescriptorSets(*frame->descriptors, *layout, 0, &set, 1, 0), "Allocate image descriptor set");
 		
 		const nri::Descriptor *descriptors[2] = {view, samplers[sampler]};
 		nri::UpdateDescriptorRangeDesc updates[2] = {};
@@ -894,6 +934,9 @@ namespace
 		for (unsigned i = 0; i < count; ++i)
 		{
 			outputs[i].object = images[i]; // owned by swapchain
+            nri::FenceDesc semaphore = {};
+            semaphore.initialValue = nri::SWAPCHAIN_SEMAPHORE;
+            check(core.CreateFence(*device, semaphore, outputs[i].present_ready), "Create image release semaphore");
 			
 			nri::TextureViewDesc vd = {};
 			vd.texture = images[i];
@@ -915,10 +958,11 @@ namespace
 
 	void destroy_output()
 	{
-		doa1u::d3d11::release_output();
 
-		for (auto &output : outputs)
+		for (auto &output : outputs) {
 			core.DestroyDescriptor(output.view);
+			core.DestroyFence(output.present_ready);
+		}
 		
 		outputs.clear();
 		
@@ -956,7 +1000,8 @@ namespace
 					core.DestroyCommandBuffer(commands);
 				
 				core.DestroyCommandAllocator(f.allocator);
-				core.DestroyDescriptorPool(f.descriptors);
+				core.DestroyFence(f.image_acquired);
+				for (auto* pool : f.descriptor_pools) core.DestroyDescriptorPool(pool);
 				
 				for (auto &arena : f.vertices)
 					core.DestroyBuffer(arena.buffer);
@@ -983,11 +1028,9 @@ namespace
 			
 			core.DestroyPipelineLayout(layout);
 			core.DestroyFence(fence);
-			core.DestroyFence(acquire);
-			core.DestroyFence(release);
 		}
 		
-		doa1u::d3d11::shutdown();
+		doa1u::ui::shutdown();
 
 		nri::nriDestroyDevice(device);
 		device = nullptr;
@@ -1003,12 +1046,20 @@ namespace
 		QueryPerformanceFrequency(&timing_frequency);
 		
 		nri::DeviceCreationDesc dc = {};
-		dc.graphicsAPI = nri::GraphicsAPI::D3D11;
+		const char* requested = std::getenv("RECOMP_NRI_API");
+        if (requested && *requested) {
+            if (!_stricmp(requested, "d3d11")) active_api = nri::GraphicsAPI::D3D11;
+            else if (!_stricmp(requested, "d3d12")) active_api = nri::GraphicsAPI::D3D12;
+            else throw std::runtime_error("RECOMP_NRI_API must be d3d11 or d3d12");
+        } else active_api = graphics_backend() == 1 ? nri::GraphicsAPI::D3D12 : nri::GraphicsAPI::D3D11;
+        api_name = active_api == nri::GraphicsAPI::D3D12 ? "D3D12" : "D3D11";
+        dc.graphicsAPI = active_api;
 		dc.callbackInterface.MessageCallback = message;
+		dc.callbackInterface.AbortExecution = abort_execution;
 		dc.enableNRIValidation = option("RECOMP_NRI_VALIDATION");
 		dc.enableGraphicsAPIValidation = dc.enableNRIValidation;
 		
-		check(nri::nriCreateDevice(dc, device), "Create NRI D3D11 device");
+		check(nri::nriCreateDevice(dc, device), "Create NRI device");
 		check(nri::nriGetInterface(*device, NRI_INTERFACE(nri::CoreInterface), &core), "Get core interface");
 		check(nri::nriGetInterface(*device, NRI_INTERFACE(nri::SwapChainInterface), &presentation), "Get swapchain interface");
 		check(core.GetQueue(*device, nri::QueueType::GRAPHICS, 0, queue), "Get graphics queue");
@@ -1028,6 +1079,8 @@ namespace
 		if (!window)
 			throw std::runtime_error("Create NRI window failed");
 		
+		std::wstring title = active_api == nri::GraphicsAPI::D3D12 ? L"DOA1U - NRI / D3D12" : L"DOA1U - NRI / D3D11";
+		SetWindowTextW(window, title.c_str());
 		graphics_window_apply(window);
 		RECT client;
 		GetClientRect(window, &client);
@@ -1037,12 +1090,11 @@ namespace
 		nri::FenceDesc fd = {};
 		check(core.CreateFence(*device, fd, fence), "Create frame fence");
 		
-		fd.initialValue = nri::SWAPCHAIN_SEMAPHORE;
-		check(core.CreateFence(*device, fd, acquire), "Create acquire semaphore");
-		check(core.CreateFence(*device, fd, release), "Create present semaphore");
-		
+
 		for (auto &f : frames)
 		{
+			fd.initialValue = nri::SWAPCHAIN_SEMAPHORE;
+			check(core.CreateFence(*device, fd, f.image_acquired), "Create frame acquire semaphore");
 			check(core.CreateCommandAllocator(*queue, f.allocator), "Create frame allocator");
 			f.chunks.push_back(nullptr);
 			
@@ -1050,8 +1102,9 @@ namespace
 			f.commands = f.chunks.front();
 			
 			nri::DescriptorPoolDesc pool = {};
-			pool.descriptorSetMaxNum = pool.textureMaxNum = pool.samplerMaxNum = 32768;
+			pool.descriptorSetMaxNum = pool.textureMaxNum = pool.samplerMaxNum = 1024;
 			check(core.CreateDescriptorPool(*device, pool, f.descriptors), "Create frame descriptor pool");
+			f.descriptor_pools.push_back(f.descriptors);
 		}
 		
 		graphics_render_size(&base_width, &base_height);
@@ -1062,15 +1115,14 @@ namespace
 		create_output();
 		
 		// No throwing initialization remains after ImGui takes ownership of its context.
-		graphics_ui_renderer_name("NRI / DirectX 11");
+		graphics_ui_renderer_name(active_api == nri::GraphicsAPI::D3D12 ? "NRI / DirectX 12" : "NRI / DirectX 11");
 		
-		if (!doa1u::d3d11::initialize_ui(window, *device, core))
-			std::fprintf(stderr, "[NRI] ImGui initialization failed; game renderer remains available\n");
+		doa1u::ui::initialize(window, *device, FrameCount);
 		
 		ShowWindow(window, SW_SHOW);
 		initialized = true;
 		
-		std::fprintf(stderr, "[NRI] v%d D3D11 renderer initialized, %ux%u; validation %s\n", NRI_VERSION,
+		std::fprintf(stderr, "[NRI] v%d %s renderer initialized, %ux%u; validation %s\n", NRI_VERSION, api_name,
 		             width, height, dc.enableNRIValidation ? "on" : "off");
 	}
 
@@ -1127,7 +1179,9 @@ namespace
 		frame->commands = frame->chunks.front();
 		
 		core.ResetCommandAllocator(*frame->allocator);
-		core.ResetDescriptorPool(*frame->descriptors);
+		for (auto* pool : frame->descriptor_pools) core.ResetDescriptorPool(*pool);
+		frame->descriptor_pool_index = frame->descriptor_sets_used = 0;
+		frame->descriptors = frame->descriptor_pools.front();
 		check(core.BeginCommandBuffer(*frame->commands, frame->descriptors), "Begin frame commands");
 		
 		recording = true;
@@ -1457,7 +1511,7 @@ namespace
 		movie_overlay();
 		end_rendering();
 		unsigned index = 0;
-		check(presentation.AcquireNextTexture(*swapchain, *acquire, index), "Acquire swapchain image");
+		check(presentation.AcquireNextTexture(*swapchain, *frame->image_acquired, index), "Acquire swapchain image");
 		
 		Texture &output = outputs.at(index);
 		Texture *image = active_color;
@@ -1486,28 +1540,30 @@ namespace
 		}
 		scale_image(*image, output, width, height, true);
 
-		submit_commands();
-
-		recording = false;
-
-		// Native interop island: ImGui's existing DX11 backend draws ONLY on the
-		// presented image, after NRI's scene copy. Never contaminate persistent scene.
-		doa1u::d3d11::draw_ui(core, *output.view);
+        // Overlay commands use the same NRI queue on every API, after AA and
+        // scene presentation. They never modify persistent guest targets.
+        transition(output, nri::AccessBits::COLOR_ATTACHMENT, nri::Layout::COLOR_ATTACHMENT,
+                   nri::StageBits::COLOR_ATTACHMENT);
+        doa1u::ui::prepare(*frame->commands);
+        nri::AttachmentDesc ui_color = {};
+        ui_color.descriptor = output.view;
+        nri::RenderingDesc ui_rendering = {};
+        ui_rendering.colors = &ui_color;
+        ui_rendering.colorNum = 1;
+        core.CmdBeginRendering(*frame->commands, ui_rendering);
+        doa1u::ui::draw(*frame->commands, width, height, core.GetTextureDesc(*output.object).format);
+        core.CmdEndRendering(*frame->commands);
+        transition(output, nri::AccessBits::NONE, nri::Layout::PRESENT, nri::StageBits::NONE);
+        submit_commands(frame->image_acquired, output.present_ready);
+        recording = false;
+        doa1u::ui::end_frame();
 
 		rdoc_maybe_trigger(frame_number);
 
-		// Signal AFTER the native overlay. Frame arenas/retired resources are not
-		// recycled until the host GPU completes this timeline value.
-		nri::FenceSubmitDesc signal = {fence, frame_number + 1, nri::StageBits::ALL};
-		nri::QueueSubmitDesc submit = {};
-		
-		submit.signalFences = &signal;
-		submit.signalFenceNum = 1;
-		check(core.QueueSubmit(*queue, submit), "Signal frame completion");
-		
-		frame->completed = signal.value;
-		check(presentation.QueuePresent(*swapchain, *release, frame_number + 1), "Present frame");
-		
+        // Final submission includes UI, acquire wait, release signal and timeline.
+        frame->completed = frame_number + 1;
+        check(presentation.QueuePresent(*swapchain, *output.present_ready, frame_number + 1), "Present frame");
+
 		output.state = {nri::AccessBits::NONE, nri::Layout::PRESENT, nri::StageBits::NONE};
 		
 		++frame_number;

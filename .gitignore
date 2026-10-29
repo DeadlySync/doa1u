@@ -229,3 +229,5 @@ Thumbs.db
 !/tools/REGRESSION_TESTS.md
 
 !/tools/antialiasing_check.cpp
+
+!/tools/nri_backend_check.cpp

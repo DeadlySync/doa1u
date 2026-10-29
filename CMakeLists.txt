@@ -22,8 +22,10 @@ add_subdirectory("${DOA1U_XBOXRECOMP_RUNTIME_DIR}" "${CMAKE_BINARY_DIR}/xboxreco
 # Pinned, vendored NRI. Initial parity backend is D3D11; no online configure downloads.
 set(NRI_STATIC_LIBRARY ON CACHE BOOL "" FORCE)
 set(NRI_ENABLE_D3D11_SUPPORT ON CACHE BOOL "" FORCE)
+set(NRI_ENABLE_D3D12_SUPPORT ON CACHE BOOL "" FORCE)
+set(NRI_ENABLE_IMGUI_EXTENSION ON CACHE BOOL "" FORCE)
 set(NRI_ENABLE_VALIDATION_SUPPORT ON CACHE BOOL "" FORCE)
-foreach(feature D3D12 VK WGPU METAL NONE NVTX NVAPI AMDAGS AGILITY_SDK IMGUI_EXTENSION NIS_SDK NGX_SDK FFX_SDK XESS_SDK)
+foreach(feature VK WGPU METAL NONE NVTX NVAPI AMDAGS AGILITY_SDK NIS_SDK NGX_SDK FFX_SDK XESS_SDK)
     if(feature STREQUAL "IMGUI_EXTENSION")
         set(NRI_ENABLE_IMGUI_EXTENSION OFF CACHE BOOL "" FORCE)
     elseif(feature MATCHES "^(NVAPI|AMDAGS|NIS_SDK|NGX_SDK|FFX_SDK|XESS_SDK)$")
@@ -53,6 +55,8 @@ set(GAME_SOURCES
     src/render/renderer.c
     src/render/nri/nv2a_backend_nri.cpp
     src/render/nri/nri_d3d11.cpp
+    src/render/nri/nri_shaders.cpp
+    src/render/nri/nri_imgui.cpp
     src/render/widescreen.c
     src/render/graphics_settings.cpp
     src/render/fighters/fighter_isolation.c
@@ -125,4 +129,15 @@ if(MSVC)
         # Fixed host addresses support the existing CDB scripts.
         /DYNAMICBASE:NO /HIGHENTROPYVA:NO
     )
+endif()
+
+# Headless synthetic GPU check, compiling the actual NRI backend (no game runtime).
+add_executable(nri_backend_check EXCLUDE_FROM_ALL tools/nri_backend_check.cpp
+    src/render/nri/nri_d3d11.cpp src/render/nri/nri_shaders.cpp src/render/nri/nri_imgui.cpp)
+target_include_directories(nri_backend_check PRIVATE src "${DOA1U_XBOXRECOMP_RUNTIME_DIR}/src/kernel")
+target_link_libraries(nri_backend_check PRIVATE NRI doa1u_imgui d3d11 d3dcompiler winmm)
+
+if(MSVC)
+    target_compile_options(nri_backend_check PRIVATE /Zi)
+    target_link_options(nri_backend_check PRIVATE /DEBUG)
 endif()

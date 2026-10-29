@@ -6,9 +6,9 @@ Recompilation for Dead or Alive 1 - ULTIMATE from the OG XBOX
   - I don't have a Linux box for testing
 * No online mode. :(
   - I have no idea how to code netcode.
-* Direct3D 11 rendering through NRI. D3D12/Vulkan switching is not implemented yet.
+* Direct3D 11/12 rendering through NRI; backend selection applies on restart.
 * Independent internal resolution and downsampling.
-* Non-temporal anti-aliasing: FXAA and 2x/4x SSAA (NRI/D3D11).
+* Non-temporal anti-aliasing: FXAA and 2x/4x SSAA (NRI/D3D11 and D3D12).
   - MSAA/SMAA are not implemented; their selectors are disabled.
 * Texture Filtering
   - Nearest-neighbor
@@ -30,7 +30,7 @@ Keep upstream license notices with each dependency.
 | --- | --- | --- |
 | xboxrecomp (MIT) | https://github.com/sp00nznet/xboxrecomp — baseline `ae9cb00b295eb418f120e6f7f02f43be8cea080b` | Sibling `../xboxrecomp`, or configure `XBOXRECOMP_DIR` |
 | NVIDIA Rendering Interface, NRI (MIT) | https://github.com/NVIDIA-RTX/NRI — `b5f5c626cfe5dd9e9d7c9e8ffc11007ba97e3b88` | `src/third_party/NRI` |
-| Dear ImGui (MIT) | https://github.com/ocornut/imgui — local headers identify version **1.92.5** | `src/third_party/imgui` |
+| Dear ImGui (MIT) | https://github.com/ocornut/imgui — pinned tag **v1.92.9b** (required by NRI ImGui extension) | `src/third_party/imgui` |
 | pl_mpeg (MIT) | https://github.com/phoboslab/pl_mpeg — single header | `src/third_party/pl_mpeg.h` |
 | RenderDoc API header (MIT) | https://github.com/baldurk/renderdoc — `renderdoc/api/app/renderdoc_app.h` | `src/third_party/renderdoc_app.h` |
 
@@ -39,8 +39,7 @@ The pl_mpeg header used here has SHA256
 the RenderDoc API header has SHA256
 `B7005E7DC34C3635046868BBD76D81B9B055AEDE0F56DAA0BD39FEDEE0639FFB`.
 Their exact upstream commits are not recorded, so these checksums identify the
-current copies but do not provide immutable download URLs. ImGui is version-
-identified rather than commit-pinned. Dependency documentation is sufficient
+current copies but do not provide immutable download URLs. ImGui is tag-pinned. Dependency documentation is sufficient
 for manual setup, not yet a fully automated, byte-reproducible checkout.
 RenderDoc capture integration is optional and diagnostic-only.
 
@@ -55,7 +54,7 @@ require regenerating it from an XBE. Original game data is not included.
 
 Requires Windows, MSVC with C/C++ tools, a Windows SDK/resource compiler, and
 CMake **3.30+**. Optional development checks also require Python.
-Install the dependencies above, then run from this repository's root:
+NRI configure fetches its pinned D3D12 memory allocator dependency. Install the dependencies above, then run from this repository's root:
 
 ```powershell
 cmake --preset release

@@ -29,6 +29,9 @@ void graphics_ui_renderer_name(const char *name);
 int graphics_ui_init(void *window, void *device, void *context);
 int graphics_ui_message(void *window, unsigned message, uintptr_t wparam, intptr_t lparam);
 void graphics_ui_draw(void);
+/* Build draw data; NRI owns GPU rendering on all APIs. */
+void graphics_ui_frame(void);
+int graphics_backend(void);
 void graphics_ui_shutdown(void);
 
 #ifdef __cplusplus

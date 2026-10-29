@@ -23,9 +23,10 @@ add_subdirectory("${DOA1U_XBOXRECOMP_RUNTIME_DIR}" "${CMAKE_BINARY_DIR}/xboxreco
 set(NRI_STATIC_LIBRARY ON CACHE BOOL "" FORCE)
 set(NRI_ENABLE_D3D11_SUPPORT ON CACHE BOOL "" FORCE)
 set(NRI_ENABLE_D3D12_SUPPORT ON CACHE BOOL "" FORCE)
+set(NRI_ENABLE_VK_SUPPORT ON CACHE BOOL "" FORCE)
 set(NRI_ENABLE_IMGUI_EXTENSION ON CACHE BOOL "" FORCE)
 set(NRI_ENABLE_VALIDATION_SUPPORT ON CACHE BOOL "" FORCE)
-foreach(feature VK WGPU METAL NONE NVTX NVAPI AMDAGS AGILITY_SDK NIS_SDK NGX_SDK FFX_SDK XESS_SDK)
+foreach(feature WGPU METAL NONE NVTX NVAPI AMDAGS AGILITY_SDK NIS_SDK NGX_SDK FFX_SDK XESS_SDK)
     if(feature STREQUAL "IMGUI_EXTENSION")
         set(NRI_ENABLE_IMGUI_EXTENSION OFF CACHE BOOL "" FORCE)
     elseif(feature MATCHES "^(NVAPI|AMDAGS|NIS_SDK|NGX_SDK|FFX_SDK|XESS_SDK)$")
@@ -35,6 +36,9 @@ foreach(feature VK WGPU METAL NONE NVTX NVAPI AMDAGS AGILITY_SDK NIS_SDK NGX_SDK
     endif()
 endforeach()
 add_subdirectory(src/third_party/NRI)
+if(NOT CMAKE_SCRIPT_MODE_FILE)
+    include(cmake/NriSpirv.cmake)
+endif()
 
 # Generated code stays in its recompiler-owned directory.
 file(GLOB RECOMP_GEN_SOURCES CONFIGURE_DEPENDS "src/recomp/gen/*.c")
@@ -140,4 +144,11 @@ target_link_libraries(nri_backend_check PRIVATE NRI doa1u_imgui d3d11 d3dcompile
 if(MSVC)
     target_compile_options(nri_backend_check PRIVATE /Zi)
     target_link_options(nri_backend_check PRIVATE /DEBUG)
+endif()
+
+if(NOT CMAKE_SCRIPT_MODE_FILE)
+    foreach(target doa1u_recomp nri_backend_check)
+        add_dependencies(${target} doa1u_spirv)
+        target_include_directories(${target} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+    endforeach()
 endif()

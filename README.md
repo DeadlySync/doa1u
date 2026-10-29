@@ -6,9 +6,10 @@ Recompilation for Dead or Alive 1 - ULTIMATE from the OG XBOX
   - I don't have a Linux box for testing
 * No online mode. :(
   - I have no idea how to code netcode.
-* Direct3D 11/12 rendering through NRI; backend selection applies on restart.
+* Direct3D 11/12 and Vulkan through NRI; backend selection applies on restart.
+  - D3D12/Vulkan are experimental until gameplay parity is user-verified.
 * Independent internal resolution and downsampling.
-* Non-temporal anti-aliasing: FXAA and 2x/4x SSAA (NRI/D3D11 and D3D12).
+* Non-temporal anti-aliasing: FXAA and 2x/4x SSAA (shared NRI path).
   - MSAA/SMAA are not implemented; their selectors are disabled.
 * Texture Filtering
   - Nearest-neighbor
@@ -53,8 +54,11 @@ require regenerating it from an XBE. Original game data is not included.
 # Building
 
 Requires Windows, MSVC with C/C++ tools, a Windows SDK/resource compiler, and
-CMake **3.30+**. Optional development checks also require Python.
-NRI configure fetches its pinned D3D12 memory allocator dependency. Install the dependencies above, then run from this repository's root:
+CMake **3.30+**, Python 3, and a DXC build with SPIR-V support. The Windows SDK
+DXC may omit SPIR-V; use the Microsoft DXC release or Vulkan SDK compiler.
+Pass `-DDOA1U_DXC="<path-to-dxc.exe>"` when configuring if needed.
+DXC/Python are build-only: shader binaries are embedded in the executable.
+NRI configure fetches pinned D3D12/Vulkan allocator and Vulkan-header dependencies. Install the dependencies above, then run from this repository's root:
 
 ```powershell
 cmake --preset release

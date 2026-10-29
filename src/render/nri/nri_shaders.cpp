@@ -2,6 +2,8 @@
 #include "nri_d3d11.h"
 #include <string>
 #include <stdexcept>
+#include <cstring>
+#include "nri_spirv.h"
 
 namespace doa1u {
 std::vector<uint8_t> compile_shader(nri::GraphicsAPI api, const char* source, const char* profile) {
@@ -16,6 +18,12 @@ std::vector<uint8_t> compile_shader(nri::GraphicsAPI api, const char* source, co
         std::string model(profile);
         model.replace(3, 3, "5_1");
         return d3d11::compile(text.c_str(), model.c_str());
+    }
+    if (api == nri::GraphicsAPI::VK) {
+        for (const auto& entry : spirv::entries)
+            if (!std::strcmp(source, entry.source) && !std::strcmp(profile, entry.profile))
+                return {entry.data, entry.data + entry.size};
+        throw std::runtime_error("Vulkan shader missing: rebuild generated SPIR-V");
     }
     throw std::runtime_error("Unsupported shader backend");
 }

@@ -1,6 +1,6 @@
-/* Port-owned NV2A rasterizer using NRI. Initial parity target: NRI/D3D11.
+/* Port-owned NV2A rasterizer using NRI / D3D11, D3D12 or Vulkan.
  * Xbox command decoding, vertex processing and guest semaphore ordering stay
- * in xboxrecomp. Native D3D11 is used only for the ImGui presentation overlay.
+ * in xboxrecomp. Scene rendering, AA and the presentation overlay use NRI.
  */
 #include "NRI.h"
 #include "Extensions/NRIDeviceCreation.h"
@@ -133,6 +133,7 @@ namespace
 	uint64_t frame_number, movie_serial;
 	unsigned movie_width, movie_height;
 	
+	bool output_outdated;
 	bool initialized, recording, rendering, failed, initial_clear = true;
 	const Nv2aBackend *fallback;
 	LARGE_INTEGER timing_frequency, chunk_started;
@@ -944,7 +945,7 @@ namespace
 			vd.mipNum = vd.layerNum = vd.sliceNum = 1;
 			check(core.CreateTextureView(vd, outputs[i].view), "Create swapchain view");
 			
-			outputs[i].state = {nri::AccessBits::NONE, nri::Layout::PRESENT, nri::StageBits::NONE};
+			outputs[i].state = {}; // Fresh Vulkan images begin UNDEFINED until first acquire/present.
 		}
 		
 		nri::Format format = core.GetTextureDesc(*images[0]).format;
@@ -1050,10 +1051,12 @@ namespace
         if (requested && *requested) {
             if (!_stricmp(requested, "d3d11")) active_api = nri::GraphicsAPI::D3D11;
             else if (!_stricmp(requested, "d3d12")) active_api = nri::GraphicsAPI::D3D12;
-            else throw std::runtime_error("RECOMP_NRI_API must be d3d11 or d3d12");
-        } else active_api = graphics_backend() == 1 ? nri::GraphicsAPI::D3D12 : nri::GraphicsAPI::D3D11;
-        api_name = active_api == nri::GraphicsAPI::D3D12 ? "D3D12" : "D3D11";
+            else if (!_stricmp(requested, "vulkan") || !_stricmp(requested, "vk")) active_api = nri::GraphicsAPI::VK;
+            else throw std::runtime_error("RECOMP_NRI_API must be d3d11, d3d12 or vulkan");
+        } else active_api = graphics_backend() == 2 ? nri::GraphicsAPI::VK : graphics_backend() == 1 ? nri::GraphicsAPI::D3D12 : nri::GraphicsAPI::D3D11;
+        api_name = active_api == nri::GraphicsAPI::VK ? "Vulkan" : active_api == nri::GraphicsAPI::D3D12 ? "D3D12" : "D3D11";
         dc.graphicsAPI = active_api;
+        dc.vkBindingOffsets.sRegister = 1; // t0=0, s0=1; matches build-time DXC flags.
 		dc.callbackInterface.MessageCallback = message;
 		dc.callbackInterface.AbortExecution = abort_execution;
 		dc.enableNRIValidation = option("RECOMP_NRI_VALIDATION");
@@ -1079,7 +1082,7 @@ namespace
 		if (!window)
 			throw std::runtime_error("Create NRI window failed");
 		
-		std::wstring title = active_api == nri::GraphicsAPI::D3D12 ? L"DOA1U - NRI / D3D12" : L"DOA1U - NRI / D3D11";
+		std::wstring title = active_api == nri::GraphicsAPI::VK ? L"DOA1U - NRI / Vulkan" : active_api == nri::GraphicsAPI::D3D12 ? L"DOA1U - NRI / D3D12" : L"DOA1U - NRI / D3D11";
 		SetWindowTextW(window, title.c_str());
 		graphics_window_apply(window);
 		RECT client;
@@ -1114,8 +1117,8 @@ namespace
 		render_height = base_height * aa_grid_y(active_aa, ssaa_samples);
 		create_output();
 		
-		// No throwing initialization remains after ImGui takes ownership of its context.
-		graphics_ui_renderer_name(active_api == nri::GraphicsAPI::D3D12 ? "NRI / DirectX 12" : "NRI / DirectX 11");
+		// UI resources are owned by the NRI bridge and included in failure cleanup.
+		graphics_ui_renderer_name(active_api == nri::GraphicsAPI::VK ? "NRI / Vulkan" : active_api == nri::GraphicsAPI::D3D12 ? "NRI / DirectX 12" : "NRI / DirectX 11");
 		
 		doa1u::ui::initialize(window, *device, FrameCount);
 		
@@ -1152,13 +1155,14 @@ namespace
 		if (recording)
 			return true;
 		
-		if (requested_width && requested_height && (width != requested_width || height != requested_height))
+		if (requested_width && requested_height && (output_outdated || width != requested_width || height != requested_height))
 		{
 			check(core.DeviceWaitIdle(device), "Wait before output resize");
 			destroy_output();
 			width = requested_width;
 			height = requested_height;
 			create_output();
+			output_outdated = false;
 		}
 		
 		frame = &frames[frame_number % FrameCount];
@@ -1511,7 +1515,20 @@ namespace
 		movie_overlay();
 		end_rendering();
 		unsigned index = 0;
-		check(presentation.AcquireNextTexture(*swapchain, *frame->image_acquired, index), "Acquire swapchain image");
+		auto acquired = presentation.AcquireNextTexture(*swapchain, *frame->image_acquired, index);
+        if (acquired == nri::Result::OUT_OF_DATE) {
+            // No image was acquired. Finish ordered offscreen work before replacing
+            // the swapchain, then continue in a new command buffer in this frame.
+            submit_commands();
+            check(core.DeviceWaitIdle(device), "Wait before outdated swapchain recovery");
+            destroy_output();
+            width = requested_width; height = requested_height;
+            create_output();
+            output_outdated = false;
+            continue_commands();
+            acquired = presentation.AcquireNextTexture(*swapchain, *frame->image_acquired, index);
+        }
+        check(acquired, "Acquire swapchain image");
 		
 		Texture &output = outputs.at(index);
 		Texture *image = active_color;
@@ -1562,7 +1579,9 @@ namespace
 
         // Final submission includes UI, acquire wait, release signal and timeline.
         frame->completed = frame_number + 1;
-        check(presentation.QueuePresent(*swapchain, *output.present_ready, frame_number + 1), "Present frame");
+        auto present_result = presentation.QueuePresent(*swapchain, *output.present_ready, frame_number + 1);
+        if (present_result == nri::Result::OUT_OF_DATE) output_outdated = true;
+        else check(present_result, "Present frame");
 
 		output.state = {nri::AccessBits::NONE, nri::Layout::PRESENT, nri::StageBits::NONE};
 		

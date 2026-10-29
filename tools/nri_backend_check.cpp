@@ -2,6 +2,10 @@
 // No guest code, window, game data or input automation. One API per process.
 #include "../src/render/nri/nv2a_backend_nri.cpp"
 #include "third_party/imgui/imgui.h"
+#include <d3d11.h>
+#include <d3d11sdklayers.h>
+#include <d3d12.h>
+#include <d3d12sdklayers.h>
 
 extern "C" {
 void xbox_InputKeySet(int, int) {}
@@ -46,15 +50,50 @@ void graphics_ui_draw() { graphics_ui_frame(); }
 void graphics_ui_shutdown() { if (ImGui::GetCurrentContext()) ImGui::DestroyContext(); }
 }
 
+void check_api_messages() {
+    check(core.DeviceWaitIdle(device), "Wait for API validation messages");
+    unsigned errors = 0;
+    auto* native = (IUnknown*)core.GetDeviceNativeObject(device);
+    if (active_api == nri::GraphicsAPI::D3D11) {
+        ID3D11InfoQueue* info = nullptr;
+        if (SUCCEEDED(native->QueryInterface(IID_PPV_ARGS(&info)))) {
+            for (UINT64 i = 0; i < info->GetNumStoredMessagesAllowedByRetrievalFilter(); ++i) {
+                SIZE_T size = 0; info->GetMessage(i, nullptr, &size);
+                std::vector<uint8_t> storage(size);
+                auto* msg = (D3D11_MESSAGE*)storage.data();
+                if (SUCCEEDED(info->GetMessage(i, msg, &size)) && msg->Severity <= D3D11_MESSAGE_SEVERITY_ERROR) {
+                    std::fprintf(stderr,"[D3D11 validation] %s\n",msg->pDescription); ++errors;
+                }
+            }
+            info->Release();
+        }
+    } else if (active_api == nri::GraphicsAPI::D3D12) {
+        ID3D12InfoQueue* info = nullptr;
+        if (SUCCEEDED(native->QueryInterface(IID_PPV_ARGS(&info)))) {
+            for (UINT64 i = 0; i < info->GetNumStoredMessagesAllowedByRetrievalFilter(); ++i) {
+                SIZE_T size = 0; info->GetMessage(i, nullptr, &size);
+                std::vector<uint8_t> storage(size);
+                auto* msg = (D3D12_MESSAGE*)storage.data();
+                if (SUCCEEDED(info->GetMessage(i, msg, &size)) && msg->Severity <= D3D12_MESSAGE_SEVERITY_ERROR) {
+                    std::fprintf(stderr,"[D3D12 validation] %s\n",msg->pDescription); ++errors;
+                }
+            }
+            info->Release();
+        }
+    }
+    if (errors) throw std::runtime_error("Native API validation errors");
+}
+
 int main(int argc, char** argv) {
     SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
     try {
-        if (argc != 2) throw std::runtime_error("Usage: nri_backend_check d3d11|d3d12|vulkan");
+        if (argc < 2 || argc > 3) throw std::runtime_error("Usage: nri_backend_check d3d11|d3d12|vulkan");
         active_api = !std::strcmp(argv[1], "d3d11") ? nri::GraphicsAPI::D3D11 :
             !std::strcmp(argv[1], "d3d12") ? nri::GraphicsAPI::D3D12 : nri::GraphicsAPI::VK;
         QueryPerformanceFrequency(&timing_frequency);
         nri::DeviceCreationDesc dc = {};
         dc.graphicsAPI = active_api;
+        dc.vkBindingOffsets.sRegister = 1;
         dc.enableNRIValidation = true;
         dc.enableGraphicsAPIValidation = option("RECOMP_NRI_VALIDATION");
         dc.callbackInterface.MessageCallback = message;
@@ -64,15 +103,55 @@ int main(int argc, char** argv) {
         check(core.GetQueue(*device, nri::QueueType::GRAPHICS, 0, queue), "Get queue");
         nri::FenceDesc fd = {};
         check(core.CreateFence(*device, fd, fence), "Create fence");
+        for (auto& slot : frames) {
+            check(core.CreateCommandAllocator(*queue, slot.allocator), "Create allocator");
+            slot.chunks.push_back(nullptr);
+            check(core.CreateCommandBuffer(*slot.allocator, slot.chunks.back()), "Create commands");
+            slot.commands = slot.chunks.back();
+            nri::DescriptorPoolDesc pool = {};
+            pool.descriptorSetMaxNum = pool.textureMaxNum = pool.samplerMaxNum = 1024;
+            check(core.CreateDescriptorPool(*device, pool, slot.descriptors), "Create descriptor pool");
+            slot.descriptor_pools.push_back(slot.descriptors);
+            fd.initialValue = nri::SWAPCHAIN_SEMAPHORE;
+            check(core.CreateFence(*device, fd, slot.image_acquired), "Create acquire semaphore");
+        }
         frame = &frames[0];
-        check(core.CreateCommandAllocator(*queue, frame->allocator), "Create allocator");
-        frame->chunks.push_back(nullptr);
-        check(core.CreateCommandBuffer(*frame->allocator, frame->chunks.back()), "Create commands");
-        frame->commands = frame->chunks.back();
-        nri::DescriptorPoolDesc pool = {};
-        pool.descriptorSetMaxNum = pool.textureMaxNum = pool.samplerMaxNum = 1024;
-        check(core.CreateDescriptorPool(*device, pool, frame->descriptors), "Create descriptor pool");
-        frame->descriptor_pools.push_back(frame->descriptors);
+        if (argc == 3 && !std::strcmp(argv[2], "--present")) {
+            check(nri::nriGetInterface(*device, NRI_INTERFACE(nri::SwapChainInterface), &presentation), "Get swapchain");
+            WNDCLASSW wc = {}; wc.lpfnWndProc = wndproc; wc.hInstance = GetModuleHandleW(nullptr);
+            wc.lpszClassName = L"DOA1UNRICheck"; RegisterClassW(&wc);
+            RECT rect = {0,0,64,48}; AdjustWindowRect(&rect, WS_OVERLAPPEDWINDOW, FALSE);
+            window = CreateWindowExW(0, wc.lpszClassName, L"NRI synthetic check (hidden)", WS_OVERLAPPEDWINDOW,
+                0,0,rect.right-rect.left,rect.bottom-rect.top,nullptr,nullptr,wc.hInstance,nullptr);
+            if (!window) throw std::runtime_error("Create hidden check window failed");
+            // Deliberately never ShowWindow: this is not an interactive/game test.
+            base_width = width = requested_width = render_width = 64;
+            base_height = height = requested_height = render_height = 48;
+            create_output();
+            doa1u::ui::initialize(window, *device, FrameCount);
+            initialized = true;
+            for (unsigned i = 0; i < 12; ++i) {
+                active_aa = i % 3 == 0 ? 0 : i % 3 == 1 ? 3 : 1;
+                if (i == 4 || i == 8) {
+                    unsigned w = i == 4 ? 96 : 64, h = i == 4 ? 72 : 48;
+                    RECT size = {0,0,(LONG)w,(LONG)h}; AdjustWindowRect(&size, WS_OVERLAPPEDWINDOW,FALSE);
+                    SetWindowPos(window,nullptr,0,0,size.right-size.left,size.bottom-size.top,SWP_NOZORDER|SWP_NOACTIVATE);
+                    requested_width = w; requested_height = h;
+                }
+                if (i == 6) output_outdated = true; // Explicit same-size swapchain replacement.
+                if (!ensure()) throw std::runtime_error("Synthetic frame unavailable");
+                Nv2aVertex verts[3] = {{0,0,0,1,0xFF20A0E0,0,0}, {64,0,0,1,0xFF20A0E0,0,0}, {0,48,0,1,0xFF20A0E0,0,0}};
+                Nv2aSurface surface = {}; surface.width = 64; surface.height = 48;
+                Nv2aBatch batch = {}; batch.vertices = verts; batch.count = 3;
+                if (i != 3) draw(&surface, &batch); // Pause/retained-scene presentation.
+                flip();
+            }
+            check_api_messages();
+            if (validation_errors) throw std::runtime_error("Presentation validation errors");
+            cleanup();
+            std::fprintf(stderr,"PASS %s: hidden swapchain, acquire/present, resize/recreate, pause and AA switching\n",argv[1]);
+            return 0;
+        }
         create_pipelines(nri::Format::RGBA8_UNORM);
         doa1u::ui::initialize(nullptr, *device, FrameCount);
         base_width = width = 64; base_height = height = 48;
@@ -105,10 +184,18 @@ int main(int argc, char** argv) {
             create_color_target(result, nri::Format::RGBA8_UNORM);
             render_width = saved_w; render_height = saved_h;
             clear(0xF3, 0xFF000000, 0xFFFFFF00);
-            Nv2aVertex verts[3] = {{0,0,0,1,0xFFFFFFFF,0,0}, {64,0,0,1,0xFFFFFFFF,0,0}, {0,48,0,1,0xFFFFFFFF,0,0}};
+            Nv2aVertex verts[3] = {{0,0,0,1,0xFF20A0E0,0,0}, {64,0,0,1,0xFF20A0E0,0,0}, {0,48,0,1,0xFF20A0E0,0,0}};
             Nv2aSurface surface = {}; surface.width = 64; surface.height = 48;
             Nv2aBatch batch = {}; batch.vertices = verts; batch.count = 3;
             draw(&surface, &batch);
+            // Exercise descriptor-pool rollover without changing the image.
+            if (iteration == 0) {
+                // draw() may have submitted a timed command chunk.
+                end_rendering();
+                transition(scene, nri::AccessBits::SHADER_RESOURCE, nri::Layout::SHADER_RESOURCE, nri::StageBits::FRAGMENT_SHADER);
+                core.CmdSetPipelineLayout(*frame->commands, nri::BindPoint::GRAPHICS, *layout);
+                for (unsigned i = 0; i < 1100; ++i) bind_image(scene.sample_view, 7);
+            }
             Constants constants = {};
             constants.surf_w = 1.0f/render_width; constants.surf_h = 1.0f/render_height;
             constants.tex_w = (float)aa_grid_x(active_aa); constants.tex_h = (float)aa_grid_y(active_aa, ssaa_samples);
@@ -133,17 +220,18 @@ int main(int argc, char** argv) {
             auto* pixels = (const uint8_t*)core.MapBuffer(*readback, 0, bd.size);
             if (!pixels) throw std::runtime_error("Map readback failed");
             auto pixel = [&](unsigned x, unsigned y) { return pixels + y*pitch + x*4; };
-            bool white = pixel(8,8)[0] > 250 && pixel(8,8)[1] > 250 && pixel(8,8)[2] > 250;
+            bool color_ok = std::abs((int)pixel(8,8)[0] - 32) <= 1 && std::abs((int)pixel(8,8)[1] - 160) <= 1 && std::abs((int)pixel(8,8)[2] - 224) <= 1;
             bool black = pixel(60,44)[0] < 3 && pixel(60,44)[1] < 3 && pixel(60,44)[2] < 3;
             bool red_ui = pixel(48,8)[0] > 250 && pixel(48,8)[1] < 3 && pixel(48,8)[2] < 3;
             core.UnmapBuffer(*readback);
-            if (!white || !black || !red_ui) throw std::runtime_error("Pixel mismatch: scene orientation/color or post-AA ImGui");
+            if (!color_ok || !black || !red_ui) throw std::runtime_error("Pixel mismatch: scene orientation/color or post-AA ImGui");
             destroy(result); destroy(scene); destroy(depth);
         }
         core.DestroyBuffer(readback);
+        check_api_messages();
         if (validation_errors) throw std::runtime_error("NRI validation reported errors");
         cleanup();
-        std::printf("PASS %s: production pipelines/draw/AA/readback + NRI ImGui, 12 frames (Off/FXAA/SSAA2x/4x)\n", argv[1]);
+        std::fprintf(stderr,"PASS %s: production pipelines/draw/AA/readback + NRI ImGui, 12 frames (Off/FXAA/SSAA2x/4x)\n", argv[1]);
         return 0;
     } catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL: %s\n", error.what());

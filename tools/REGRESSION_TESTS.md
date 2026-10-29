@@ -38,3 +38,19 @@ AA regression, from the port root (no game/window/hardware GPU):
 cmake --build build --config Release --target antialiasing_check
 ./build/Release/antialiasing_check.exe
 ```
+
+## Multi-API production renderer check
+
+Build `nri_backend_check` in Release. Run once per API (`d3d11`, `d3d12`, `vulkan`).
+This synthetic headless check includes the actual production backend and NRI UI
+bridge. It creates all scene/AA pipelines and reads back known scene/UI pixels
+across 12 Off/FXAA/SSAA2x/4x frames. No game, guest code, files or input injection.
+NRI validation is enabled; optional API validation uses RECOMP_NRI_VALIDATION=1.
+Errors log/return failure without NRI's default breakpoint dialog. Run with an
+external timeout when automating. This does not establish full game parity.
+
+Add `--present` to each API invocation for hidden-window swapchain tests (the
+window is never shown): acquire/present, resize/recreate, pause and AA switching.
+Set `$env:RECOMP_NRI_VALIDATION='1'` for native API validation; D3D11/12 InfoQueue
+errors/corruption fail the check. Require exit zero AND a PASS marker. The real
+Win32 F1 settings panel and gameplay still require user testing.

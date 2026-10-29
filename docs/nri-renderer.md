@@ -1,3 +1,5 @@
+> Current multi-API implementation and validation: [nri-multi-api.md](nri-multi-api.md). Older D3D11-only descriptions below are historical.
+
 # NRI renderer migration — 2026-10-27
 
 ## Current milestone

@@ -53,7 +53,7 @@ namespace
 	std::string notice;
 	const char *renderer_name = "DirectX 11 (legacy)";
 	HWND hwnd;
-	bool ready = false, visible = false;
+	bool ready = false, visible = false, native_dx11 = false;
 	bool save_error = false;
 
 	int read_int(const wchar_t *key, int fallback, int maximum)
@@ -81,7 +81,7 @@ namespace
 		char text[2048];
 		int count = snprintf(text, sizeof text,
 							 "; DOA1U host graphics preferences. Aspect, window and NRI resolution/filtering are active.\r\n"
-							 "; NRI SSAA/FXAA are active. GPU/backend/MSAA/SMAA remain unavailable.\r\n"
+							 "; NRI SSAA/FXAA are active. GPU selection/MSAA/SMAA remain unavailable. Backend applies on restart.\r\n"
 							 "; Resolution values below are preset indices, independently per aspect.\r\n"
 							 "[Graphics]\r\nVersion=1\r\nAspectRatio=%d\r\n"
 							 "Window43=%d\r\nWindow169=%d\r\nRender43=%d\r\nRender169=%d\r\n"
@@ -304,7 +304,7 @@ namespace
 				}
 				
 				settings_combo("Rendering backend", &prefs.backend, "DirectX 11\0DirectX 12\0Vulkan\0");
-				ImGui::TextWrapped("Active renderer: %s. GPU/backend selections require future implementation.", renderer_name);
+				ImGui::TextWrapped("Active renderer: %s. Save and restart to change backend. GPU selection is not yet applied.", renderer_name);
 			}
 			
 			if (ImGui::CollapsingHeader("Texture filtering", ImGuiTreeNodeFlags_DefaultOpen))
@@ -321,7 +321,7 @@ namespace
 			
 			if (ImGui::CollapsingHeader("Anti-aliasing", ImGuiTreeNodeFlags_DefaultOpen))
 			{
-				const bool supported = std::string(renderer_name) == "NRI / DirectX 11";
+				const bool supported = std::string(renderer_name).find("NRI / ") == 0;
 				ImGui::BeginDisabled(!supported);
 				const char *names[] = {"Off", "SSAA", "MSAA (unavailable)", "FXAA", "SMAA (unavailable)"};
 				if (begin_settings_combo("AA method", names[prefs.aa])) {
@@ -540,7 +540,8 @@ extern "C" int graphics_ui_init(void *window, void *device, void *context)
 		return 0;
 	}
 
-	if (!ImGui_ImplDX11_Init((ID3D11Device *)device, (ID3D11DeviceContext *)context))
+	native_dx11 = device != nullptr;
+	if (native_dx11 && !ImGui_ImplDX11_Init((ID3D11Device *)device, (ID3D11DeviceContext *)context))
 	{
 		ImGui_ImplWin32_Shutdown();
 		ImGui::DestroyContext();
@@ -586,12 +587,12 @@ extern "C" int graphics_ui_message(void *window, unsigned message, uintptr_t wpa
 	return 0;
 }
 
-extern "C" void graphics_ui_draw(void)
+extern "C" void graphics_ui_frame(void)
 {
 	if (!ready)
 		return;
 
-	ImGui_ImplDX11_NewFrame();
+	if (native_dx11) ImGui_ImplDX11_NewFrame();
 	ImGui_ImplWin32_NewFrame();
 	ImGui::NewFrame();
 
@@ -599,15 +600,22 @@ extern "C" void graphics_ui_draw(void)
 		panel();
 
 	ImGui::Render();
-	ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+}
+
+extern "C" void graphics_ui_draw(void)
+{
+	graphics_ui_frame();
+	if (ready && native_dx11) ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
 }
 
 extern "C" void graphics_ui_shutdown(void)
 {
     if (!ready) return;
-    ImGui_ImplDX11_Shutdown();
+    if (native_dx11) ImGui_ImplDX11_Shutdown();
     ImGui_ImplWin32_Shutdown();
     ImGui::DestroyContext();
     ready = visible = false;
     adapters.clear();
 }
+
+extern "C" int graphics_backend(void) { return prefs.backend; }

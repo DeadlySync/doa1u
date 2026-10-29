@@ -26,6 +26,7 @@ Recompilation for Dead or Alive 1 - ULTIMATE from the OG XBOX
 * NVIDIA Rendering Interface (MIT) https://github.com/NVIDIA-RTX/NVRHI
 * ImGUI (MIT) https://github.com/ocornut/imgui
 * pl_mpeg (MIT) https://github.com/phoboslab/pl_mpeg
+* RenderDoc (MIT) https://github.com/baldurk/renderdoc
 
 # Building
 Make sure to clone all the repos above somewhere.\

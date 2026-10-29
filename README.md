@@ -20,9 +20,9 @@ Recompilation for Dead or Alive 1 - ULTIMATE from the OG XBOX
 * PS4, PS5, XBOX and Nintendo Pro Controller support (soon.)
 
 # Status
-Fully playable. Audio, FX and Voices are all available and working. 
-Arcade, Training, Time Attack, Survival, Kumite - all fully working.
-"Secret Menu" also works.
+Fully playable. Audio, FX and Voices are all available and working.\
+Arcade, Training, Time Attack, Survival, Kumite - all fully working.\
+"Secret Menu" also works.\
 No online mode, sorry.
  
 # Disclaimer

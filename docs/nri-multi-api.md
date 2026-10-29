@@ -39,3 +39,38 @@ Headless production-renderer checks now PASS on RTX4080 SUPER for both APIs:
 12 frames each, all 12 scene pipelines created, actual draw/clear, Off/FXAA/SSAA2x/4x,
 readback orientation/color and post-AA NRI ImGui pixels. These checks are NOT
 live-game or swapchain validation. User game testing remains required.
+
+## Milestone 3: Vulkan integration
+
+Backend=2 or RECOMP_NRI_API=vulkan selects Vulkan; default remains D3D11.
+`cmake/NriSpirv.cmake` compiles actual production HLSL strings at build time,
+using `tools/compile_nri_spirv.py`. Root constants become Vulkan push constants;
+sampler registers are shifted by 1 to avoid the t0/s0 collision, matched by
+DeviceCreationDesc.vkBindingOffsets. NRI's UI ignores global binding offsets and
+uses its own embedded shaders. NRI already flips Vulkan viewports for top-left
+origin, so the port must NOT also flip shader Y.
+
+Build tool used: official Microsoft DXC v1.8.2505.1 (`dxc_2025_07_14.zip`), SHA256
+`9ad895a6b039e3a8f8c22a1009f866800b840a74b50db9218d13319e215ea8a4`.
+Download: https://github.com/microsoft/DirectXShaderCompiler/releases/tag/v1.8.2505.1
+No compiler DLL is needed beside the game; compiled SPIR-V is embedded.
+NRI fetches Vulkan-Headers v1.4.365, VMA bfb2ca99e1e7e9684dc06546b552ee3eff4b10aa,
+and D3D12MA b73737b0b4cde0b5ab80d685209cdc0d81cf878e at configure time.
+
+## Completed local verification (2026-10-29)
+
+All three APIs pass 12-frame offscreen pixel tests and 12-frame hidden-window
+production presentation checks on RTX 4080 SUPER, with NRI/native API validation.
+D3D11/D3D12 native InfoQueues contain no error/corruption messages. Presentation
+covers acquire/release synchronization, resize, same-size recreation, pause and AA
+switching. The stress test explicitly establishes shader-resource state/layout
+before exercising 1100 descriptor bindings (draw may submit a timed chunk).
+Swapchain OUT_OF_DATE triggers safe recreation; new Vulkan images start undefined.
+Synthetic ImGui data tests the NRI bridge, not the real Win32 settings panel.
+
+Release EXE/PDB deployed to XISO with matching hashes. WARP AA, seven DXBC shaders,
+seven SPIR-V shaders, target/depth/alpha/P8/mip regressions, source audit and both
+source configurations pass. No live game launched: gameplay/F1 parity and
+performance remain user validation. MSAA/SMAA are not implemented in this change.
+All feature branches merge locally into integration/nri-multi-api; main and origin
+remain unchanged. Select backend in F1, Save and restart (D3D11 remains default).

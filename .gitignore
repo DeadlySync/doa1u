@@ -231,3 +231,4 @@ Thumbs.db
 !/tools/antialiasing_check.cpp
 
 !/tools/nri_backend_check.cpp
+!/tools/compile_nri_spirv.py

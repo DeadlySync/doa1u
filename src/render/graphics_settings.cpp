@@ -81,7 +81,7 @@ namespace
 		char text[2048];
 		int count = snprintf(text, sizeof text,
 							 "; DOA1U host graphics preferences. Aspect, window and NRI resolution/filtering are active.\r\n"
-							 "; NRI SSAA/FXAA are active. GPU selection/MSAA/SMAA remain unavailable. Backend applies on restart.\r\n"
+							 "; NRI SSAA/MSAA/FXAA/SMAA are active. GPU selection remains unavailable. Backend applies on restart.\r\n"
 							 "; Resolution values below are preset indices, independently per aspect.\r\n"
 							 "[Graphics]\r\nVersion=1\r\nAspectRatio=%d\r\n"
 							 "Window43=%d\r\nWindow169=%d\r\nRender43=%d\r\nRender169=%d\r\n"
@@ -323,12 +323,10 @@ namespace
 			{
 				const bool supported = std::string(renderer_name).find("NRI / ") == 0;
 				ImGui::BeginDisabled(!supported);
-				const char *names[] = {"Off", "SSAA", "MSAA (unavailable)", "FXAA", "SMAA (unavailable)"};
+				const char *names[] = {"Off", "SSAA", "MSAA", "FXAA", "SMAA"};
 				if (begin_settings_combo("AA method", names[prefs.aa])) {
 					for (int i = 0; i < 5; ++i) {
-						ImGui::BeginDisabled(i == 2 || i == 4);
 						if (ImGui::Selectable(names[i], prefs.aa == i)) prefs.aa = i;
-						ImGui::EndDisabled();
 					}
 					ImGui::EndCombo();
 				}
@@ -337,7 +335,12 @@ namespace
 					const Size size = prefs.aspect ? sizes169[prefs.render169] : sizes43[prefs.render43];
 					ImGui::Text("Render size: %d x %d", size.w * 2, size.h * (prefs.ssaa ? 2 : 1));
 					ImGui::TextWrapped("Supersampling increases GPU work and memory use. Applies next frame.");
-				} else if (prefs.aa == 3) {
+				} else if (prefs.aa == 2) {
+                    settings_combo("MSAA samples", &prefs.msaa, "2x\0" "4x\0" "8x\0");
+                    ImGui::TextWrapped("Multisampling smooths geometry edges. Unsupported counts fall back to a supported count. Applies next frame.");
+                } else if (prefs.aa == 4) {
+                    ImGui::TextWrapped("SMAA 1x (High): spatial edge detection and morphological blending. Applies next frame.");
+                } else if (prefs.aa == 3) {
 					ImGui::TextWrapped("FXAA smooths high-contrast edges without increasing render resolution. Applies next frame.");
 				}
 				ImGui::EndDisabled();
@@ -430,7 +433,12 @@ extern "C" void graphics_render_size(unsigned *width, unsigned *height)
 
 extern "C" int graphics_aa_method(void)
 {
-	return prefs.aa == 1 || prefs.aa == 3 ? prefs.aa : 0;
+	return prefs.aa;
+}
+
+extern "C" unsigned graphics_msaa_samples(void)
+{
+    return 2u << prefs.msaa;
 }
 
 extern "C" unsigned graphics_ssaa_samples(void)

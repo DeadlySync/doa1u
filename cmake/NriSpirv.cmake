@@ -23,5 +23,6 @@ add_custom_command(OUTPUT "${DOA1U_SPIRV_HEADER}"
         --dxc "${DOA1U_DXC}" --output "${DOA1U_SPIRV_HEADER}"
     DEPENDS "${DOA1U_DXC}" tools/compile_nri_spirv.py src/render/common/guest_shaders.h
         src/render/common/antialiasing.h src/render/nri/nv2a_backend_nri.cpp
+        src/render/nri/smaa/SMAA.hlsl src/render/nri/smaa/wrappers.hlsl
     VERBATIM COMMENT "Compile production NRI shaders to embedded SPIR-V")
 add_custom_target(doa1u_spirv DEPENDS "${DOA1U_SPIRV_HEADER}")

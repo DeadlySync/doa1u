@@ -63,3 +63,13 @@ The synthetic decoder supplies alternating black/white columns. Assert measured
 contrast: nearest >=250, bilinear magnification 150..210, bilinear minification
 >=100 vs trilinear <=3, directional anisotropic detail >=100. AA disabled to isolate
 filtering. These test sampler execution; saved-setting mapping is code-reviewed.
+
+SMAA/MSAA: run `nri_backend_check <api> --smaa` / `--msaa` for each API.
+SMAA checks actual three-pass HIGH output: diagonal smoothing, flat colors, source
+alpha (opaque/translucent) and post-AA UI. MSAA cycles supported 2x/4x/8x targets,
+checks resolved edge coverage and rejects farther geometry using multisampled
+depth. `--present` now runs 20 frames switching all five modes and MSAA sample
+counts; simulates reduced capability masks to check fallback, plus resize,
+same-size recreation and pause. No game launched. Original offscreen/filter and
+WARP regressions remain required. Native D3D12 breaks are disabled in the test
+only; errors still fail through InfoQueue and NRI validation.

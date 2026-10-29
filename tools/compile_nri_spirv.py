@@ -34,8 +34,16 @@ def main():
               "namespace doa1u::spirv {",
               "struct Entry { const char* source; const char* profile; const uint8_t* data; size_t size; };"]
     entries = []
+    smaa = (root / "src/render/nri/smaa/SMAA.hlsl").read_text()
+    smaa = smaa.replace("SamplerState LinearSampler { Filter = MIN_MAG_LINEAR_MIP_POINT; AddressU = Clamp; AddressV = Clamp; };", "SamplerState LinearSampler:register(s0);")
+    smaa = smaa.replace("SamplerState PointSampler { Filter = MIN_MAG_MIP_POINT; AddressU = Clamp; AddressV = Clamp; };", "SamplerState PointSampler:register(s1);")
+    wrapper = (root / "src/render/nri/smaa/wrappers.hlsl").read_text().replace('#include "SMAA.hlsl"', smaa)
+    smaa_sources = [(f"HLSL_SMAA_{i}", f"#define SMAA_PASS {i}\n" + wrapper) for i in range(3)]
+    for name, original in smaa_sources:
+        header.append(f"inline const char* {name}_source = {json.dumps(original)};")
+    shaders += [(None, name, "ps_5_0") for name, _ in smaa_sources]
     for file, name, profile in shaders:
-        original = extract((root / file).read_text(encoding="utf-8"), name)
+        original = extract((root / file).read_text(encoding="utf-8"), name) if file else dict(smaa_sources)[name]
         text = original
         block = re.search(r"cbuffer\s+\w+\s*:\s*register\(b0\)\s*\{([^}]*)\};", text)
         if block:

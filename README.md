@@ -7,10 +7,12 @@ Recompilation for Dead or Alive 1 - ULTIMATE from the OG XBOX
 * No online mode. :(
   - I have no idea how to code netcode.
 * Direct3D 11/12 and Vulkan through NRI; backend selection applies on restart.
-  - D3D12/Vulkan are experimental until gameplay parity is user-verified.
+  - Backend selection is user-tested; broader scene/performance parity remains under evaluation.
 * Independent internal resolution and downsampling.
-* Non-temporal anti-aliasing: FXAA and 2x/4x SSAA (shared NRI path).
-  - MSAA/SMAA are not implemented; their selectors are disabled.
+* Non-temporal anti-aliasing: FXAA, 2x/4x SSAA, 2x/4x/8x MSAA and SMAA 1x High.
+  - Shared NRI path on D3D11/D3D12/Vulkan. MSAA/SMAA await in-game user validation.
+  - Select in F1 > Anti-aliasing; applies next frame. Save persists settings.
+  - MSAA falls back to a supported color/depth sample count when necessary.
 * Texture Filtering
   - Nearest-neighbor
   - Bilinear
@@ -23,7 +25,8 @@ Recompilation for Dead or Alive 1 - ULTIMATE from the OG XBOX
 
 # Dependencies
 
-Third-party source remains excluded from this repository. Install it at the
+Large third-party SDK source remains excluded from this repository. The small MIT-licensed
+SMAA shaders/lookup headers are vendored under `src/render/nri/smaa` with their license. Install it at the
 paths below before configuring; README entries do not download dependencies.
 Keep upstream license notices with each dependency.
 

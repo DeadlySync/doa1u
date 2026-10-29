@@ -7,6 +7,7 @@
 #include <d3d12.h>
 #include <d3d12sdklayers.h>
 
+static unsigned test_msaa_requested = 4;
 extern "C" {
 void xbox_InputKeySet(int, int) {}
 void xbox_InputKeysClear() {}
@@ -29,6 +30,7 @@ int graphics_backend() { return 0; }
 void graphics_render_size(unsigned* w, unsigned* h) { *w = 64; *h = 48; }
 int graphics_aa_method() { return active_aa; }
 unsigned graphics_ssaa_samples() { return ssaa_samples; }
+unsigned graphics_msaa_samples() { return test_msaa_requested; }
 int graphics_texture_filter() { return 1; }
 unsigned graphics_anisotropy() { return 2; }
 void graphics_window_apply(void*) {}
@@ -92,7 +94,7 @@ void check_api_messages() {
 int main(int argc, char** argv) {
     SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
     try {
-        if (argc < 2 || argc > 3) throw std::runtime_error("Usage: nri_backend_check d3d11|d3d12|vulkan");
+        if (argc < 2 || argc > 3) throw std::runtime_error("Usage: nri_backend_check d3d11|d3d12|vulkan [--present|--filter|--smaa|--msaa]");
         active_api = !std::strcmp(argv[1], "d3d11") ? nri::GraphicsAPI::D3D11 :
             !std::strcmp(argv[1], "d3d12") ? nri::GraphicsAPI::D3D12 : nri::GraphicsAPI::VK;
         QueryPerformanceFrequency(&timing_frequency);
@@ -105,6 +107,15 @@ int main(int argc, char** argv) {
         dc.callbackInterface.AbortExecution = abort_execution;
         check(nri::nriCreateDevice(dc, device), "Create check device");
         check(nri::nriGetInterface(*device, NRI_INTERFACE(nri::CoreInterface), &core), "Get core");
+        if (active_api == nri::GraphicsAPI::D3D12) {
+            ID3D12InfoQueue* info=nullptr;
+            auto* native=(IUnknown*)core.GetDeviceNativeObject(device);
+            if (SUCCEEDED(native->QueryInterface(IID_PPV_ARGS(&info)))) {
+                info->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_ERROR,FALSE);
+                info->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_CORRUPTION,FALSE);
+                info->Release();
+            }
+        }
         check(core.GetQueue(*device, nri::QueueType::GRAPHICS, 0, queue), "Get queue");
         nri::FenceDesc fd = {};
         check(core.CreateFence(*device, fd, fence), "Create fence");
@@ -135,8 +146,11 @@ int main(int argc, char** argv) {
             create_output();
             doa1u::ui::initialize(window, *device, FrameCount);
             initialized = true;
-            for (unsigned i = 0; i < 12; ++i) {
-                active_aa = i % 3 == 0 ? 0 : i % 3 == 1 ? 3 : 1;
+            unsigned device_msaa = supported_msaa;
+            for (unsigned i = 0; i < 20; ++i) {
+                const int methods[] = {0,4,2,2,3,1,4,2,0,4};
+                active_aa = methods[i%10];
+                test_msaa_requested = 2u << (i%3);
                 if (i == 4 || i == 8) {
                     unsigned w = i == 4 ? 96 : 64, h = i == 4 ? 72 : 48;
                     RECT size = {0,0,(LONG)w,(LONG)h}; AdjustWindowRect(&size, WS_OVERLAPPEDWINDOW,FALSE);
@@ -144,7 +158,11 @@ int main(int argc, char** argv) {
                     requested_width = w; requested_height = h;
                 }
                 if (i == 6) output_outdated = true; // Explicit same-size swapchain replacement.
+                supported_msaa = i==12 ? 1 : i==13 ? (device_msaa & 3u) : device_msaa;
                 if (!ensure()) throw std::runtime_error("Synthetic frame unavailable");
+                unsigned expected_samples = active_aa==2 ? test_msaa_requested : 1;
+                while (expected_samples>1 && !(supported_msaa & expected_samples)) expected_samples/=2;
+                if (scene_samples!=expected_samples) throw std::runtime_error("MSAA capability fallback failed");
                 Nv2aVertex verts[3] = {{0,0,0,1,0xFF20A0E0,0,0}, {64,0,0,1,0xFF20A0E0,0,0}, {0,48,0,1,0xFF20A0E0,0,0}};
                 Nv2aSurface surface = {}; surface.width = 64; surface.height = 48;
                 Nv2aBatch batch = {}; batch.vertices = verts; batch.count = 3;
@@ -167,16 +185,21 @@ int main(int argc, char** argv) {
         nri::BufferDesc bd = {};
         bd.size = align_up(pitch * height, limits.uploadBufferTextureSlice);
         check(core.CreateCommittedBuffer(*device, nri::MemoryLocation::HOST_READBACK, 0, bd, readback), "Create readback");
+        bool msaa_check = argc == 3 && !std::strcmp(argv[2], "--msaa");
+        bool smaa_check = argc == 3 && !std::strcmp(argv[2], "--smaa");
         bool filtering_check = argc == 3 && !std::strcmp(argv[2], "--filter");
         double contrast[8] = {};
         for (unsigned iteration = 0; iteration < (filtering_check ? 8u : 12u); ++iteration) {
             active_aa = iteration % 4 == 0 ? 0 : iteration % 4 == 1 ? 3 : 1;
             ssaa_samples = iteration % 4 == 2 ? 2 : 4;
+            if (smaa_check) active_aa = 4;
+            if (msaa_check) { active_aa = 2; scene_samples = 2u << (iteration % 3); if (!(supported_msaa & scene_samples)) continue; }
             if (filtering_check) { active_aa = 0; active_sampler = iteration < 3 ? (iteration == 0 ? 0 : 1) : iteration - 1; }
             render_width = base_width * aa_grid_x(active_aa);
             render_height = base_height * aa_grid_y(active_aa, ssaa_samples);
             core.ResetCommandAllocator(*frame->allocator);
             for (auto* pool : frame->descriptor_pools) core.ResetDescriptorPool(*pool);
+            if (frame->smaa_descriptors) core.ResetDescriptorPool(*frame->smaa_descriptors);
             frame->descriptor_pool_index = frame->descriptor_sets_used = 0;
             frame->descriptors = frame->descriptor_pools.front();
             for (auto& arena : frame->vertices) arena.used = 0;
@@ -189,12 +212,15 @@ int main(int argc, char** argv) {
             // Output remains base-resolution even when the scene is supersampled.
             unsigned saved_w = render_width, saved_h = render_height;
             render_width = base_width; render_height = base_height;
+            unsigned saved_samples = scene_samples; scene_samples = 1;
             create_color_target(result, nri::Format::RGBA8_UNORM);
+            scene_samples = saved_samples;
             render_width = saved_w; render_height = saved_h;
             clear(0xF3, 0xFF000000, 0xFFFFFF00);
             Nv2aVertex verts[3] = {{0,0,0,1,0xFF20A0E0,0,0}, {64,0,0,1,0xFF20A0E0,0,0}, {0,48,0,1,0xFF20A0E0,0,0}};
             Nv2aSurface surface = {}; surface.width = 64; surface.height = 48;
             Nv2aBatch batch = {}; batch.vertices = verts; batch.count = 3;
+            if (smaa_check && iteration % 2) for (auto& v : verts) v.diffuse = 0x8020A0E0;
             Nv2aTexture texture = {}; texture.width = texture.height = 64;
             if (filtering_check) {
                 batch.texture = &texture;
@@ -202,9 +228,16 @@ int main(int argc, char** argv) {
                 float dy = iteration < 2 ? 0.25f : iteration >= 4 ? (float)(2u << (iteration - 4)) : 8.0f;
                 for (auto& v : verts) { v.diffuse = 0xFFFFFFFF; v.u = v.x * dx; v.v = v.y * dy; }
             }
+            Nv2aRenderState state = {};
+            if (msaa_check) { state.depth_test_enable=state.depth_write=1; batch.state=&state; }
             draw(&surface, &batch);
+            if (msaa_check) {
+                // Far geometry must not overwrite the nearer samples/depth.
+                for (auto& v : verts) { v.z=16777215.0f; v.diffuse=0xFFFF0000; }
+                draw(&surface,&batch);
+            }
             // Exercise descriptor-pool rollover without changing the image.
-            if (iteration == 0 && !filtering_check) {
+            if (iteration == 0 && !filtering_check && !msaa_check) {
                 // draw() may have submitted a timed command chunk.
                 end_rendering();
                 transition(scene, nri::AccessBits::SHADER_RESOURCE, nri::Layout::SHADER_RESOURCE, nri::StageBits::FRAGMENT_SHADER);
@@ -214,8 +247,10 @@ int main(int argc, char** argv) {
             Constants constants = {};
             constants.surf_w = 1.0f/render_width; constants.surf_h = 1.0f/render_height;
             constants.tex_w = (float)aa_grid_x(active_aa); constants.tex_h = (float)aa_grid_y(active_aa, ssaa_samples);
-            scale_image(scene, result, width, height, false,
+            if (smaa_check) smaa_image(scene,result);
+            else scale_image(scene, result, width, height, false,
                 active_aa == 3 ? fxaa_pipeline : active_aa == 1 ? ssaa_pipeline : present_pipeline, &constants);
+            transition(result,nri::AccessBits::COLOR_ATTACHMENT,nri::Layout::COLOR_ATTACHMENT,nri::StageBits::COLOR_ATTACHMENT);
             doa1u::ui::prepare(*frame->commands);
             nri::AttachmentDesc color = {}; color.descriptor = result.view;
             nri::RenderingDesc rendering_desc = {}; rendering_desc.colors = &color; rendering_desc.colorNum = 1;
@@ -238,6 +273,17 @@ int main(int argc, char** argv) {
             bool color_ok = std::abs((int)pixel(8,8)[0] - 32) <= 1 && std::abs((int)pixel(8,8)[1] - 160) <= 1 && std::abs((int)pixel(8,8)[2] - 224) <= 1;
             bool black = pixel(60,44)[0] < 3 && pixel(60,44)[1] < 3 && pixel(60,44)[2] < 3;
             bool red_ui = pixel(48,8)[0] > 250 && pixel(48,8)[1] < 3 && pixel(48,8)[2] < 3;
+            if (smaa_check || msaa_check) {
+                unsigned softened=0;
+                for (unsigned y=12;y<22;++y) for (unsigned x=12;x<54;++x) {
+                    const auto* c=pixel(x,y);
+                    if (c[0]>1 && c[0]<31) ++softened;
+                    unsigned expected_alpha = smaa_check && iteration % 2 && ((x+0.5f)/64 + (y+0.5f)/48 < 1) ? 128 : 255;
+                    if (c[3]!=expected_alpha) throw std::runtime_error("AA changed source alpha");
+                }
+                std::fprintf(stderr,"AA %s mode %s samples %u softened %u\n",argv[1],smaa_check?"SMAA":"MSAA",scene_samples,softened);
+                if (softened<3) throw std::runtime_error("AA did not smooth geometry edge");
+            }
             if (filtering_check) {
                 int lo = 255, hi = 0;
                 for (unsigned x = 2; x < 26; ++x) { int value = pixel(x,16)[0]; lo = std::min(lo,value); hi = std::max(hi,value); }
@@ -257,6 +303,10 @@ int main(int argc, char** argv) {
         check_api_messages();
         if (validation_errors) throw std::runtime_error("NRI validation reported errors");
         cleanup();
+        if (smaa_check || msaa_check) {
+            std::fprintf(stderr,"PASS %s: %s geometry-edge smoothing, color/alpha preservation and post-AA UI, 12 frames\n",argv[1],smaa_check?"SMAA 1x HIGH":"MSAA 2x/4x/8x");
+            return 0;
+        }
         if (filtering_check) {
             std::fprintf(stderr,"PASS %s: textured nearest/bilinear/trilinear and anisotropic 2x/4x/8x/16x pixel checks\n",argv[1]);
             return 0;

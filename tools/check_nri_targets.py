@@ -26,12 +26,12 @@ Texture scene{{1}},depth{{2}};
 std::map<uint32_t,Texture> color_targets,depth_targets;
 Texture *active_color=&scene,*active_depth=&depth,*drawn_color=nullptr,*presented_color=nullptr;
 uint64_t drawn_area=0;
-unsigned render_width=1280,render_height=720,next_object=3;
+unsigned render_width=1280,render_height=720,next_object=3,scene_samples=1;
 const Nv2aBackend *fallback=nullptr;
 bool rendering=false;
 void end_rendering() { rendering=false; }
 void create_color_target(Texture&t,nri::Format) { t.object={next_object++}; }
-void make_texture(Texture&t,unsigned,unsigned,nri::Format,nri::TextureUsageBits,nri::TextureView) { t.object={next_object++}; }
+void make_texture(Texture&t,unsigned,unsigned,nri::Format,nri::TextureUsageBits,nri::TextureView,unsigned=1,unsigned=1) { t.object={next_object++}; }
 void clear(unsigned flags,uint32_t color,uint32_t zs) {
     if(flags&0xf0) active_color->value=color;
     if(flags&3) active_depth->value=zs;

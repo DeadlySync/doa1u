@@ -52,6 +52,7 @@ set(GAME_SOURCES
     src/render/d3d11/nv2a_backend_d3d11.c
     src/render/renderer.c
     src/render/nri/nv2a_backend_nri.cpp
+    src/render/nri/nri_d3d11.cpp
     src/render/widescreen.c
     src/render/graphics_settings.cpp
     src/render/fighters/fighter_isolation.c

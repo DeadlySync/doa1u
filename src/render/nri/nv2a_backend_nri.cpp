@@ -6,8 +6,7 @@
 #include "Extensions/NRIDeviceCreation.h"
 #include "Extensions/NRISwapChain.h"
 #include <windows.h>
-#include <d3d11.h>
-#include <d3dcompiler.h>
+#include "nri_d3d11.h"
 #include <mmsystem.h>
 #include <algorithm>
 #include <array>
@@ -121,7 +120,6 @@ namespace
 	long cached_generation;
 	HWND window;
 	
-	ID3D11DeviceContext *ui_context;
 	
 	unsigned width = 640, height = 480, requested_width, requested_height;
 	uint64_t frame_number, movie_serial;
@@ -604,27 +602,6 @@ namespace
 			graphics_window_apply(window);
 	}
 
-	std::vector<uint8_t> compile(const char *source, const char *profile)
-	{
-		ID3DBlob *blob = nullptr, *errors = nullptr;
-		HRESULT result = 
-			D3DCompile(source, std::strlen(source), nullptr, nullptr, nullptr, "main", profile, 0, 0, &blob, &errors);
-			
-		if (errors)
-		{
-			std::fprintf(stderr, "[NRI] Shader: %s\n", (const char *)errors->GetBufferPointer());
-			errors->Release();
-		}
-		
-		if (FAILED(result))
-			throw std::runtime_error("Compile NRI/D3D11 shader failed");
-		
-		const auto *bytes = (const uint8_t *)blob->GetBufferPointer();
-		std::vector<uint8_t> code(bytes, bytes + blob->GetBufferSize());
-		blob->Release();
-		
-		return code;
-	}
 
 	void create_pipelines(nri::Format color_format)
 	{
@@ -665,9 +642,9 @@ namespace
 		ld.shaderStages = constants.shaderStages;
 		check(core.CreatePipelineLayout(*device, ld, layout), "Create pipeline layout");
 
-		auto vs = compile(HLSL_VS, "vs_5_0");
-		auto tex = compile(HLSL_PS_TEX, "ps_5_0");
-		auto flat = compile(HLSL_PS_FLAT, "ps_5_0");
+		auto vs = doa1u::d3d11::compile(HLSL_VS, "vs_5_0");
+		auto tex = doa1u::d3d11::compile(HLSL_PS_TEX, "ps_5_0");
+		auto flat = doa1u::d3d11::compile(HLSL_PS_FLAT, "ps_5_0");
 		
 		nri::VertexAttributeDesc attributes[3] = {};
 		attributes[0].d3d.semanticName = "POSITION";
@@ -739,7 +716,7 @@ namespace
 			"Texture2D t:register(t0);SamplerState s:register(s0);"
 			"float4 main(float4 p:SV_Position,float2 uv:TEXCOORD):SV_Target{return t.SampleLevel(s,uv,0);}";
 			
-		auto pvs = compile(present_vs, "vs_5_0"), pps = compile(present_ps, "ps_5_0");
+		auto pvs = doa1u::d3d11::compile(present_vs, "vs_5_0"), pps = doa1u::d3d11::compile(present_ps, "ps_5_0");
 		nri::ShaderDesc shaders[2] = {
 			{nri::StageBits::VERTEX_SHADER, pvs.data(), pvs.size(), "main"},
 			{nri::StageBits::FRAGMENT_SHADER, pps.data(), pps.size(), "main"}};
@@ -757,7 +734,7 @@ namespace
 		pd.shaders = shaders;
 		pd.shaderNum = 2;
 		check(core.CreateGraphicsPipeline(*device, pd, present_pipeline), "Create presentation pipeline");
-		auto fxaa = compile(HLSL_FXAA, "ps_5_0"), ssaa = compile(HLSL_SSAA, "ps_5_0");
+		auto fxaa = doa1u::d3d11::compile(HLSL_FXAA, "ps_5_0"), ssaa = doa1u::d3d11::compile(HLSL_SSAA, "ps_5_0");
 		shaders[1] = {nri::StageBits::FRAGMENT_SHADER, fxaa.data(), fxaa.size(), "main"};
 		check(core.CreateGraphicsPipeline(*device, pd, fxaa_pipeline), "Create FXAA pipeline");
 		shaders[1] = {nri::StageBits::FRAGMENT_SHADER, ssaa.data(), ssaa.size(), "main"};
@@ -938,12 +915,8 @@ namespace
 
 	void destroy_output()
 	{
-		if (ui_context)
-		{
-			ui_context->ClearState();
-			ui_context->Flush();
-		}
-		
+		doa1u::d3d11::release_output();
+
 		for (auto &output : outputs)
 			core.DestroyDescriptor(output.view);
 		
@@ -1014,11 +987,8 @@ namespace
 			core.DestroyFence(release);
 		}
 		
-		if (ui_context)
-			ui_context->Release();
-		
-		ui_context = nullptr;
-		
+		doa1u::d3d11::shutdown();
+
 		nri::nriDestroyDevice(device);
 		device = nullptr;
 		
@@ -1043,8 +1013,6 @@ namespace
 		check(nri::nriGetInterface(*device, NRI_INTERFACE(nri::SwapChainInterface), &presentation), "Get swapchain interface");
 		check(core.GetQueue(*device, nri::QueueType::GRAPHICS, 0, queue), "Get graphics queue");
 		
-		auto *native_device = (ID3D11Device *)core.GetDeviceNativeObject(device);
-		native_device->GetImmediateContext(&ui_context);
 
 		WNDCLASSW wc = {};
 		wc.lpfnWndProc = wndproc;
@@ -1096,7 +1064,7 @@ namespace
 		// No throwing initialization remains after ImGui takes ownership of its context.
 		graphics_ui_renderer_name("NRI / DirectX 11");
 		
-		if (!graphics_ui_init(window, native_device, ui_context))
+		if (!doa1u::d3d11::initialize_ui(window, *device, core))
 			std::fprintf(stderr, "[NRI] ImGui initialization failed; game renderer remains available\n");
 		
 		ShowWindow(window, SW_SHOW);
@@ -1524,11 +1492,8 @@ namespace
 
 		// Native interop island: ImGui's existing DX11 backend draws ONLY on the
 		// presented image, after NRI's scene copy. Never contaminate persistent scene.
-		auto *rtv = (ID3D11RenderTargetView *)(uintptr_t)core.GetDescriptorNativeObject(output.view);
-		ui_context->OMSetRenderTargets(1, &rtv, nullptr);
-		graphics_ui_draw();
-		
-		ui_context->OMSetRenderTargets(0, nullptr, nullptr);
+		doa1u::d3d11::draw_ui(core, *output.view);
+
 		rdoc_maybe_trigger(frame_number);
 
 		// Signal AFTER the native overlay. Frame arenas/retired resources are not

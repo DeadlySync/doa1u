@@ -601,3 +601,13 @@ extern "C" void graphics_ui_draw(void)
 	ImGui::Render();
 	ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
 }
+
+extern "C" void graphics_ui_shutdown(void)
+{
+    if (!ready) return;
+    ImGui_ImplDX11_Shutdown();
+    ImGui_ImplWin32_Shutdown();
+    ImGui::DestroyContext();
+    ready = visible = false;
+    adapters.clear();
+}

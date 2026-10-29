@@ -29,6 +29,7 @@ void graphics_ui_renderer_name(const char *name);
 int graphics_ui_init(void *window, void *device, void *context);
 int graphics_ui_message(void *window, unsigned message, uintptr_t wparam, intptr_t lparam);
 void graphics_ui_draw(void);
+void graphics_ui_shutdown(void);
 
 #ifdef __cplusplus
 }

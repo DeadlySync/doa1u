@@ -74,3 +74,15 @@ source configurations pass. No live game launched: gameplay/F1 parity and
 performance remain user validation. MSAA/SMAA are not implemented in this change.
 All feature branches merge locally into integration/nri-multi-api; main and origin
 remain unchanged. Select backend in F1, Save and restart (D3D11 remains default).
+
+## User verification and texture filtering (2026-10-29)
+
+User confirmed rendering-backend selection tested and working. Filtering traced
+from live preferences through per-frame sampler index to guest texture bindings;
+nearest/bilinear/trilinear and anisotropic 2x/4x/8x/16x are active on all APIs.
+`nri_backend_check --filter` pixel checks pass on all three APIs with native/NRI
+validation and identical results on RTX4080 SUPER. Movies intentionally stay
+bilinear; scene presentation uses its own clamped sampler; UI uses NRI's sampler.
+No production renderer correction needed. Live preferences apply on the next
+rendered frame; Save persists across launches. Full gameplay appearance remains
+user evaluation, separate from synthetic filtering verification.

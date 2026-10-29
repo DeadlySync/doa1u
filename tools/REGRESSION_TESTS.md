@@ -54,3 +54,12 @@ window is never shown): acquire/present, resize/recreate, pause and AA switching
 Set `$env:RECOMP_NRI_VALIDATION='1'` for native API validation; D3D11/12 InfoQueue
 errors/corruption fail the check. Require exit zero AND a PASS marker. The real
 Win32 F1 settings panel and gameplay still require user testing.
+
+Texture filtering: run `nri_backend_check d3d11 --filter` (also `d3d12`, `vulkan`).
+Eight frames exercise actual texture cache/decode/upload/mip generation, textured
+production draw and readback: nearest vs bilinear magnification, bilinear vs
+trilinear minification, anisotropic 2x/4x/8x/16x with matching directional footprints.
+The synthetic decoder supplies alternating black/white columns. Assert measured
+contrast: nearest >=250, bilinear magnification 150..210, bilinear minification
+>=100 vs trilinear <=3, directional anisotropic detail >=100. AA disabled to isolate
+filtering. These test sampler execution; saved-setting mapping is code-reviewed.

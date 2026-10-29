@@ -1,5 +1,5 @@
 // Headless synthetic rendering using the ACTUAL production renderer functions.
-// No guest code, window, game data or input automation. One API per process.
+// No guest code, game data or input automation. Optional hidden window. One API per process.
 #include "../src/render/nri/nv2a_backend_nri.cpp"
 #include "third_party/imgui/imgui.h"
 #include <d3d11.h>
@@ -17,7 +17,12 @@ void fmv_frame_release() {}
 long renderer_texture_generation() { return 0; }
 const Nv2aBackend* nv2a_d3d11_backend() { return nullptr; }
 void nv2a_backend_register(const Nv2aBackend*) {}
-int nv2a_backend_decode_texture(const Nv2aTexture*, uint32_t*) { return 0; }
+int nv2a_backend_decode_texture(const Nv2aTexture* t, uint32_t* pixels) {
+    for (unsigned y=0; y<t->height; ++y)
+        for (unsigned x=0; x<t->width; ++x)
+            pixels[y*t->width+x] = x % 2 ? 0xFFFFFFFF : 0xFF000000;
+    return 1;
+}
 int nv2a_backend_p8_source(const Nv2aTexture*, const uint8_t**, const uint8_t**) { return 0; }
 int graphics_widescreen() { return 0; }
 int graphics_backend() { return 0; }
@@ -162,9 +167,12 @@ int main(int argc, char** argv) {
         nri::BufferDesc bd = {};
         bd.size = align_up(pitch * height, limits.uploadBufferTextureSlice);
         check(core.CreateCommittedBuffer(*device, nri::MemoryLocation::HOST_READBACK, 0, bd, readback), "Create readback");
-        for (unsigned iteration = 0; iteration < 12; ++iteration) {
+        bool filtering_check = argc == 3 && !std::strcmp(argv[2], "--filter");
+        double contrast[8] = {};
+        for (unsigned iteration = 0; iteration < (filtering_check ? 8u : 12u); ++iteration) {
             active_aa = iteration % 4 == 0 ? 0 : iteration % 4 == 1 ? 3 : 1;
             ssaa_samples = iteration % 4 == 2 ? 2 : 4;
+            if (filtering_check) { active_aa = 0; active_sampler = iteration < 3 ? (iteration == 0 ? 0 : 1) : iteration - 1; }
             render_width = base_width * aa_grid_x(active_aa);
             render_height = base_height * aa_grid_y(active_aa, ssaa_samples);
             core.ResetCommandAllocator(*frame->allocator);
@@ -187,9 +195,16 @@ int main(int argc, char** argv) {
             Nv2aVertex verts[3] = {{0,0,0,1,0xFF20A0E0,0,0}, {64,0,0,1,0xFF20A0E0,0,0}, {0,48,0,1,0xFF20A0E0,0,0}};
             Nv2aSurface surface = {}; surface.width = 64; surface.height = 48;
             Nv2aBatch batch = {}; batch.vertices = verts; batch.count = 3;
+            Nv2aTexture texture = {}; texture.width = texture.height = 64;
+            if (filtering_check) {
+                batch.texture = &texture;
+                float dx = iteration < 2 || iteration >= 4 ? 0.25f : 8.125f;
+                float dy = iteration < 2 ? 0.25f : iteration >= 4 ? (float)(2u << (iteration - 4)) : 8.0f;
+                for (auto& v : verts) { v.diffuse = 0xFFFFFFFF; v.u = v.x * dx; v.v = v.y * dy; }
+            }
             draw(&surface, &batch);
             // Exercise descriptor-pool rollover without changing the image.
-            if (iteration == 0) {
+            if (iteration == 0 && !filtering_check) {
                 // draw() may have submitted a timed command chunk.
                 end_rendering();
                 transition(scene, nri::AccessBits::SHADER_RESOURCE, nri::Layout::SHADER_RESOURCE, nri::StageBits::FRAGMENT_SHADER);
@@ -223,14 +238,29 @@ int main(int argc, char** argv) {
             bool color_ok = std::abs((int)pixel(8,8)[0] - 32) <= 1 && std::abs((int)pixel(8,8)[1] - 160) <= 1 && std::abs((int)pixel(8,8)[2] - 224) <= 1;
             bool black = pixel(60,44)[0] < 3 && pixel(60,44)[1] < 3 && pixel(60,44)[2] < 3;
             bool red_ui = pixel(48,8)[0] > 250 && pixel(48,8)[1] < 3 && pixel(48,8)[2] < 3;
+            if (filtering_check) {
+                int lo = 255, hi = 0;
+                for (unsigned x = 2; x < 26; ++x) { int value = pixel(x,16)[0]; lo = std::min(lo,value); hi = std::max(hi,value); }
+                contrast[iteration] = hi-lo;
+                std::fprintf(stderr,"FILTER %s case %u sampler %u contrast %.0f center %u\n",argv[1],iteration,active_sampler,contrast[iteration],pixel(8,16)[0]);
+            }
             core.UnmapBuffer(*readback);
-            if (!color_ok || !black || !red_ui) throw std::runtime_error("Pixel mismatch: scene orientation/color or post-AA ImGui");
+            if (!filtering_check && (!color_ok || !black || !red_ui)) throw std::runtime_error("Pixel mismatch: scene orientation/color or post-AA ImGui");
             destroy(result); destroy(scene); destroy(depth);
+        }
+        if (filtering_check) {
+            if (contrast[0] < 250 || contrast[1] < 150 || contrast[1] > 210 || contrast[2] < 100 || contrast[3] > 3)
+                throw std::runtime_error("Nearest/bilinear/trilinear filtering mismatch");
+            if (contrast[4] < 100 || contrast[5] < 100 || contrast[6] < 100 || contrast[7] < 100) throw std::runtime_error("Anisotropic filtering did not preserve directional detail");
         }
         core.DestroyBuffer(readback);
         check_api_messages();
         if (validation_errors) throw std::runtime_error("NRI validation reported errors");
         cleanup();
+        if (filtering_check) {
+            std::fprintf(stderr,"PASS %s: textured nearest/bilinear/trilinear and anisotropic 2x/4x/8x/16x pixel checks\n",argv[1]);
+            return 0;
+        }
         std::fprintf(stderr,"PASS %s: production pipelines/draw/AA/readback + NRI ImGui, 12 frames (Off/FXAA/SSAA2x/4x)\n", argv[1]);
         return 0;
     } catch (const std::exception& error) {

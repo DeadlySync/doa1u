@@ -19,6 +19,14 @@ Recompilation for Dead or Alive 1 - ULTIMATE from the OG XBOX
   - Anisotropic 
 * PS4, PS5, XBOX and Nintendo Pro Controller support (soon.)
 
+# Made With
+* xboxrecomp (MIT) https://github.com/sp00nznet/xboxrecomp
+
+# Dependencies
+* NVIDIA Rendering Interface (MIT) https://github.com/NVIDIA-RTX/NVRHI
+* ImGUI (MIT) https://github.com/ocornut/imgui
+* pl_mpeg (MIT) https://github.com/phoboslab/pl_mpeg
+
 # Status
 Fully playable. Audio, FX and Voices are all available and working.\
 Arcade, Training, Time Attack, Survival, Kumite - all fully working.\

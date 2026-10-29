@@ -26,6 +26,13 @@ Recompilation for Dead or Alive 1 - ULTIMATE from the OG XBOX
 * NVIDIA Rendering Interface (MIT) https://github.com/NVIDIA-RTX/NVRHI
 * ImGUI (MIT) https://github.com/ocornut/imgui
 * pl_mpeg (MIT) https://github.com/phoboslab/pl_mpeg
+* RenderDoc (MIT) https://github.com/baldurk/renderdoc
+
+# Building
+Make sure to clone all the repos above somewhere.\
+Change `CMakeLists.txt` to reflect the source of the dependencies.\
+Run: `cmake --build build --config Release --target doa1u_recomp`
+** Builds with MSVC compiler. **
 
 # Status
 Fully playable. Audio, FX and Voices are all available and working.\

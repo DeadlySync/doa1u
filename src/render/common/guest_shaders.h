@@ -1,0 +1,75 @@
+#ifndef DOA1U_GUEST_SHADERS_H
+#define DOA1U_GUEST_SHADERS_H
+
+static const char *HLSL_VS =
+"cbuffer C : register(b0){ float2 surf; float2 texsz; float aref; float showall; float diffscale; float afunc; float2 layout; float2 layoutpad; };\n"
+"struct VIn  { float4 pos:POSITION; float4 col:COLOR; float2 uv:TEXCOORD; };\n"
+"struct VOut { float4 pos:SV_Position; float4 col:COLOR; float2 uv:TEXCOORD; };\n"
+"VOut main(VIn i){\n"
+"  VOut o;\n"
+"  float w = (i.pos.w != 0.0) ? (1.0 / i.pos.w) : 1.0;  /* rhw = 1/w */\n"
+"  float2 ndc;\n"
+"  ndc.x = i.pos.x / surf.x * 2.0 - 1.0;\n"
+"  ndc.y = 1.0 - i.pos.y / surf.y * 2.0;            /* flip Y for D3D */\n"
+"  ndc *= layout; /* preserve 4:3 overlays inside a widescreen canvas */\n"
+"  /* The executor hands z in the title's DEVICE depth range (viewport z-scale\n"
+"   * c[58].z / offset c[59].z -> a 24-bit depth buffer, [0,0xFFFFFF]), not the\n"
+"   * [0,1] a pass-through VS assumed. Left raw, the 3D fighters/floor arrive at\n"
+"   * z~15.8M and every triangle is depth-clipped (diag: ~95%% of 3D draws\n"
+"   * OFFSCREEN with z in the millions). Normalise to [0,1] here; 2D HUD draws\n"
+"   * (z=0, depth-test OFF) are unaffected. 0xFFFFFF matches gpu_clear's own Z24\n"
+"   * normalisation. */\n"
+"  o.pos = float4(ndc.x * w, ndc.y * w, (i.pos.z / 16777215.0) * w, w);\n"
+"  o.col = i.col;\n"
+"  o.uv  = (texsz.x > 0.0) ? (i.uv / texsz) : i.uv; /* texels -> [0,1] */\n"
+"  return o;\n"
+"}\n";
+
+static const char *HLSL_PS_TEX =
+"Texture2D t : register(t0);\n"
+"SamplerState s : register(s0);\n"
+"cbuffer C : register(b0){ float2 surf; float2 texsz; float aref; float showall; float diffscale; float afunc; float2 layout; float2 layoutpad; };\n"
+"bool alpha_pass(float a,float r,float f){\n"
+"  return f==0x201 ? a<r : f==0x202 ? a==r : f==0x203 ? a<=r :\n"
+"         f==0x204 ? a>r : f==0x205 ? a!=r : f==0x206 ? a>=r : f==0x207;\n"
+"}\n"
+"struct VOut { float4 pos:SV_Position; float4 col:COLOR; float2 uv:TEXCOORD; };\n"
+"float4 main(VOut i):SV_Target{\n"
+"  float4 tx = t.Sample(s, i.uv);\n"
+"  /* RECOMP_GPU_SHOWALL diag: full-bright texture, no diffuse modulate, no alpha\n"
+"   * discard -- shows exactly where geometry rasterises regardless of shading. */\n"
+"  if (showall > 0.5) return float4(tx.rgb, 1.0);\n"
+"  /* POC combiner stand-in. The real NV2A register combiners (and their final\n"
+"   * output scale of 1/2/2/4x) aren't passed to a back end. Two observed cases:\n"
+"   *  (1) 2D/UI draws use a BLACK vertex diffuse (0x000000) the combiner ignores\n"
+"   *      -- modulating by it would zero the image; treat pure black as white so\n"
+"   *      the texture passes through unchanged.\n"
+"   *  (2) 3D fighters carry a FLAT dark diffuse (~0x202020, no per-vertex light;\n"
+"   *      Nv2aVertex has no normal so no real lighting reaches us). Hardware\n"
+"   *      scales this up in the combiner, so a straight tex*0.125 wrongly crushes\n"
+"   *      them to black. Apply diffscale (approx the combiner output scale) so a\n"
+"   *      flat ~0x20 diffuse lifts the texture back toward full, while genuinely\n"
+"   *      colour-tinted diffuse still tints. Texture (SHOWALL-correct) dominates.\n"
+"   * Alpha stays texture.a * diffuse.a for correct blending. */\n"
+"  float m = max(i.col.r, max(i.col.g, i.col.b));\n"
+"  float3 d = (m <= 0.002) ? float3(1,1,1) : saturate(i.col.rgb * diffscale);\n"
+"  float4 c = float4(tx.rgb * d, tx.a * i.col.a);\n"
+"  if (aref >= 0.0 && !alpha_pass(c.a,aref,afunc)) discard;\n"
+"  return c;\n"
+"}\n";
+
+static const char *HLSL_PS_FLAT =
+"cbuffer C : register(b0){ float2 surf; float2 texsz; float aref; float showall; float diffscale; float afunc; float2 layout; float2 layoutpad; };\n"
+"bool alpha_pass(float a,float r,float f){\n"
+"  return f==0x201 ? a<r : f==0x202 ? a==r : f==0x203 ? a<=r :\n"
+"         f==0x204 ? a>r : f==0x205 ? a!=r : f==0x206 ? a>=r : f==0x207;\n"
+"}\n"
+"struct VOut { float4 pos:SV_Position; float4 col:COLOR; float2 uv:TEXCOORD; };\n"
+"float4 main(VOut i):SV_Target{\n"
+"  float4 c = i.col;\n"
+"  if (aref >= 0.0 && !alpha_pass(c.a,aref,afunc)) discard;\n"
+"  return c;\n"
+"}\n";
+
+
+#endif

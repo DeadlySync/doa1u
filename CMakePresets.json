@@ -1,0 +1,42 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "release",
+      "displayName": "Release without diagnostic source files",
+      "generator": "Visual Studio 18 2026",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "DOA1U_DIAGNOSTIC": "OFF"
+      }
+    },
+    {
+      "name": "diagnostic",
+      "displayName": "Release with diagnostic probes and RenderDoc",
+      "inherits": "release",
+      "binaryDir": "${sourceDir}/build-diagnostic",
+      "cacheVariables": {
+        "DOA1U_DIAGNOSTIC": "ON",
+        "RECOMP_WITH_RENDERDOC": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "release",
+      "configurePreset": "release",
+      "configuration": "Release",
+      "targets": [
+        "doa1u_recomp"
+      ]
+    },
+    {
+      "name": "diagnostic",
+      "configurePreset": "diagnostic",
+      "configuration": "Release",
+      "targets": [
+        "doa1u_recomp"
+      ]
+    }
+  ]
+}

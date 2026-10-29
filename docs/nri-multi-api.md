@@ -86,3 +86,28 @@ bilinear; scene presentation uses its own clamped sampler; UI uses NRI's sampler
 No production renderer correction needed. Live preferences apply on the next
 rendered frame; Save persists across launches. Full gameplay appearance remains
 user evaluation, separate from synthetic filtering verification.
+
+## SMAA and MSAA (2026-10-29)
+
+Supersedes earlier unavailable-AA notes. F1 now enables both modes with stable
+INI IDs (MSAA=2, SMAA=4). SMAA is the official MIT implementation, pinned commit
+71c806a838bdd7d517df19192a20f0c61b3ca29d, spatial 1x HIGH/color-edge preset.
+Three full-resolution passes use RG8 edges, RGBA8 weights and the original area/
+search textures. Source alpha is preserved. See src/render/nri/smaa/README.md.
+
+MSAA allocates matching multisampled color/depth per existing guest target
+identity. Supported 2x/4x/8x format counts are queried, with descending fallback
+(and explicit log). Each color target owns a single-sample resolve partner.
+Presentation resolves with NRI AVERAGE before window scaling; guest targets remain
+intact. Single/multisample copy pipelines preserve retained color when changing
+resolution or AA/sample count; depth is recreated/cleared on those changes,
+matching the existing resolution-switch behavior. Resources retire behind frame
+fences. Scene pipeline variants match each supported count; alpha-to-coverage
+is deliberately off to retain guest alpha-test/blend behavior. No temporal data.
+
+Native UI is always after AA. Existing FXAA/SSAA/filtering remain shared. Build
+embeds three extra SMAA SPIR-V shaders; no new runtime DLLs or external downloads.
+Native/NRI-validated synthetic rendering and hidden-presentation tests pass for all
+three APIs on RTX4080 SUPER. Game Release built and matching EXE/PDB deployed to
+XISO/hash-verified. In-game appearance/performance and F1 interaction for these
+new modes remain user validation; no game launched or input injected by agent.

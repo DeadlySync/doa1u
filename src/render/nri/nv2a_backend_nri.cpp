@@ -9,6 +9,9 @@
 #undef ERROR // Win32 macro conflicts with nri::Message::ERROR.
 #include "nri_imgui.h"
 #include "nri_shaders.h"
+#include "nri_spirv.h"
+#include "smaa/AreaTex.h"
+#include "smaa/SearchTex.h"
 #include <mmsystem.h>
 #include <algorithm>
 #include <array>
@@ -41,12 +44,15 @@ extern "C"
 
 namespace
 {
+    static_assert(sizeof(areaTexBytes) == AREATEX_SIZE);
+    static_assert(sizeof(searchTexBytes) == SEARCHTEX_SIZE);
 	constexpr unsigned FrameCount = 2, TextureCount = 512;
 	constexpr uint64_t ArenaSize = 4 * 1024 * 1024;
 
 	struct Texture
 	{
 		nri::Texture *object = nullptr;
+        Texture* resolved = nullptr;
 		nri::Fence *present_ready = nullptr;
 		nri::Descriptor *view = nullptr;
 		nri::Descriptor *sample_view = nullptr;
@@ -63,6 +69,7 @@ namespace
 	struct Frame
 	{
 		nri::CommandAllocator *allocator = nullptr;
+        nri::DescriptorPool* smaa_descriptors = nullptr;
 		nri::Fence *image_acquired = nullptr;
 		nri::CommandBuffer *commands = nullptr;
 		std::vector<nri::CommandBuffer *> chunks;
@@ -105,11 +112,17 @@ namespace
 	nri::Fence *fence;
 	nri::PipelineLayout *layout;
 	nri::Pipeline *present_pipeline, *fxaa_pipeline, *ssaa_pipeline;
+    nri::PipelineLayout* smaa_layout = nullptr;
+    nri::Pipeline* smaa_pipelines[3] = {};
+    nri::Descriptor* smaa_point = nullptr;
+    Texture smaa_edges, smaa_weights, smaa_area, smaa_search;
 	nri::Descriptor *samplers[8] = {}; // nearest, bilinear, trilinear, aniso 2/4/8/16, presentation
 	unsigned render_width = 640, render_height = 480, active_sampler = 1;
-	unsigned base_width = 640, base_height = 480, ssaa_samples = 4;
+	unsigned base_width = 640, base_height = 480, ssaa_samples = 4, scene_samples = 1;
+    unsigned supported_msaa = 1, last_msaa_request = 0;
 	int active_aa;
-	nri::Pipeline *pipelines[2][3][2] = {}; // textured, depth off/read/write, blend
+	nri::Pipeline *pipelines[4][2][3][2] = {}; // samples 1/2/4/8, textured, depth off/read/write, blend
+    nri::Pipeline* copy_pipelines[4] = {}; // seed retained color when changing sample count
 	
 	std::array<Frame, FrameCount> frames;
 	
@@ -170,7 +183,8 @@ namespace
 
 	void destroy(Texture &texture)
 	{
-		core.DestroyDescriptor(texture.sample_view);
+		if (texture.resolved) { destroy(*texture.resolved); delete texture.resolved; }
+        core.DestroyDescriptor(texture.sample_view);
 		core.DestroyDescriptor(texture.view);
 		core.DestroyTexture(texture.object);
 		
@@ -278,7 +292,7 @@ namespace
 		texture.state = barrier.after;
 	}
 
-	void make_texture(Texture &texture, unsigned w, unsigned h, nri::Format format, nri::TextureUsageBits usage, nri::TextureView view, unsigned mips = 1)
+	void make_texture(Texture &texture, unsigned w, unsigned h, nri::Format format, nri::TextureUsageBits usage, nri::TextureView view, unsigned mips = 1, unsigned samples = 1)
 	{
 		nri::TextureDesc desc = {};
 		
@@ -287,7 +301,8 @@ namespace
 		desc.format = format;
 		desc.width = (nri::Dim_t)w;
 		desc.height = (nri::Dim_t)h;
-		desc.depth = desc.layerNum = desc.sampleNum = 1;
+		desc.depth = desc.layerNum = 1;
+        desc.sampleNum = (nri::Sample_t)samples;
 		desc.mipNum = (nri::Dim_t)mips;
 		texture.mips = mips;
 		
@@ -415,17 +430,17 @@ namespace
 		return {selected->buffer, offset};
 	}
 
-	void upload_texture(Texture &image, const void *pixels, unsigned w, unsigned h, unsigned mip = 0)
+	void upload_texture(Texture &image, const void *pixels, unsigned w, unsigned h, unsigned mip = 0, unsigned bytes_per_pixel = 4)
 	{
 		end_rendering();
 		
 		const auto &limits = core.GetDeviceDesc(*device).memoryAlignment;
-		unsigned row = (unsigned)align_up(w * 4, std::max(1u, limits.uploadBufferTextureRow));
+		unsigned row = (unsigned)align_up(w * bytes_per_pixel, std::max(1u, limits.uploadBufferTextureRow));
 		unsigned slice = (unsigned)align_up((uint64_t)row * h, std::max(1u, limits.uploadBufferTextureSlice));
 		std::vector<uint8_t> padded(slice);
 		
 		for (unsigned y = 0; y < h; ++y)
-			std::memcpy(padded.data() + (size_t)y * row, (const uint8_t *)pixels + (size_t)y * w * 4, w * 4);
+			std::memcpy(padded.data() + (size_t)y * row, (const uint8_t *)pixels + (size_t)y * w * bytes_per_pixel, w * bytes_per_pixel);
 		
 		Upload source = upload(frame->uploads, padded.data(), slice, std::max(1u, limits.uploadBufferTextureSlice), nri::BufferUsageBits::NONE);
 		transition(image, nri::AccessBits::COPY_DESTINATION, nri::Layout::COPY_DESTINATION, nri::StageBits::COPY);
@@ -628,8 +643,16 @@ namespace
 	}
 
 
-	void create_pipelines(nri::Format color_format)
-	{
+    void create_pipelines(nri::Format color_format)
+    {
+        const auto color_support = core.GetFormatSupport(*device,color_format);
+        const auto depth_support = core.GetFormatSupport(*device,nri::Format::D24_UNORM_S8_UINT);
+        const nri::FormatSupportBits flags[] = {nri::FormatSupportBits::MULTISAMPLE_2X,nri::FormatSupportBits::MULTISAMPLE_4X,nri::FormatSupportBits::MULTISAMPLE_8X};
+        supported_msaa = 1;
+        if ((color_support & nri::FormatSupportBits::MULTISAMPLE_RESOLVE))
+            for (unsigned i=0;i<3;++i)
+                if ((color_support & flags[i]) && (depth_support & flags[i])) supported_msaa |= 2u << i;
+
 		nri::DescriptorRangeDesc ranges[2] = {};
 		ranges[0].descriptorNum = ranges[1].descriptorNum = 1;
 		ranges[0].descriptorType = nri::DescriptorType::TEXTURE;
@@ -688,6 +711,9 @@ namespace
 		
 		nri::VertexInputDesc input = {attributes, 3, &stream, 1};
 		
+        for (unsigned samples=1; samples<=8; samples*=2) {
+            if (!(supported_msaa & samples)) continue;
+            nri::MultisampleDesc ms = {}; ms.sampleNum=(nri::Sample_t)samples;
 		for (unsigned textured = 0; textured < 2; ++textured)
 			for (unsigned z = 0; z < 3; ++z)
 				for (unsigned blend = 0; blend < 2; ++blend)
@@ -718,6 +744,7 @@ namespace
 					
 					nri::GraphicsPipelineDesc pd = {};
 					pd.pipelineLayout = layout;
+                    pd.multisample = &ms;
 					pd.vertexInput = &input;
 					pd.inputAssembly.topology = nri::Topology::TRIANGLE_LIST;
 					pd.rasterization.cullMode = nri::CullMode::NONE;
@@ -729,8 +756,9 @@ namespace
 					pd.shaders = shaders;
 					pd.shaderNum = 2;
 					
-					check(core.CreateGraphicsPipeline(*device, pd, pipelines[textured][z][blend]), "Create graphics pipeline");
+					check(core.CreateGraphicsPipeline(*device, pd, pipelines[samples == 8 ? 3 : samples == 4 ? 2 : samples == 2 ? 1 : 0][textured][z][blend]), "Create graphics pipeline");
 				}
+        }
 		// Full-screen triangle; no guest diffuse, alpha test or depth behavior.
 		const char *present_vs =
 			"struct O{float4 p:SV_Position;float2 uv:TEXCOORD;};"
@@ -759,11 +787,40 @@ namespace
 		pd.shaders = shaders;
 		pd.shaderNum = 2;
 		check(core.CreateGraphicsPipeline(*device, pd, present_pipeline), "Create presentation pipeline");
+        copy_pipelines[0]=present_pipeline;
+        for (unsigned samples=2; samples<=8; samples*=2) {
+            if (!(supported_msaa & samples)) continue;
+            nri::MultisampleDesc ms = {}; ms.sampleNum=(nri::Sample_t)samples;
+            pd.multisample=&ms;
+            check(core.CreateGraphicsPipeline(*device,pd,copy_pipelines[samples==8?3:samples==4?2:1]),"Create multisample preservation pipeline");
+        }
+        pd.multisample=nullptr;
+
 		auto fxaa = doa1u::compile_shader(active_api, HLSL_FXAA, "ps_5_0"), ssaa = doa1u::compile_shader(active_api, HLSL_SSAA, "ps_5_0");
 		shaders[1] = {nri::StageBits::FRAGMENT_SHADER, fxaa.data(), fxaa.size(), "main"};
 		check(core.CreateGraphicsPipeline(*device, pd, fxaa_pipeline), "Create FXAA pipeline");
 		shaders[1] = {nri::StageBits::FRAGMENT_SHADER, ssaa.data(), ssaa.size(), "main"};
 		check(core.CreateGraphicsPipeline(*device, pd, ssaa_pipeline), "Create SSAA resolve pipeline");
+        nri::DescriptorRangeDesc sr[2] = {};
+        sr[0].baseRegisterIndex = 8; sr[0].descriptorNum = 3;
+        sr[0].descriptorType = nri::DescriptorType::TEXTURE;
+        sr[1].descriptorNum = 2; sr[1].descriptorType = nri::DescriptorType::SAMPLER;
+        sr[0].shaderStages = sr[1].shaderStages = nri::StageBits::FRAGMENT_SHADER;
+        set.ranges = sr;
+        check(core.CreatePipelineLayout(*device, ld, smaa_layout), "Create SMAA layout");
+        pd.pipelineLayout = smaa_layout;
+        const char* sources[] = {doa1u::spirv::HLSL_SMAA_0_source, doa1u::spirv::HLSL_SMAA_1_source, doa1u::spirv::HLSL_SMAA_2_source};
+        for (unsigned i=0;i<3;++i) {
+            auto shader = doa1u::compile_shader(active_api,sources[i],"ps_5_0");
+            shaders[1] = {nri::StageBits::FRAGMENT_SHADER,shader.data(),shader.size(),"main"};
+            color.format = i == 0 ? nri::Format::RG8_UNORM : i == 1 ? nri::Format::RGBA8_UNORM : color_format;
+            check(core.CreateGraphicsPipeline(*device,pd,smaa_pipelines[i]),"Create SMAA pipeline");
+        }
+        nri::SamplerDesc point = {};
+        point.addressModes = {nri::AddressMode::CLAMP_TO_EDGE,nri::AddressMode::CLAMP_TO_EDGE,nri::AddressMode::CLAMP_TO_EDGE};
+        point.anisotropy = 1;
+        check(core.CreateSampler(*device,point,smaa_point),"Create SMAA point sampler");
+
 
 	}
 
@@ -806,11 +863,23 @@ namespace
 		core.CmdSetDescriptorSet(*frame->commands, bind);
 	}
 
-	void scale_image(Texture &source, Texture &target, unsigned w, unsigned h, bool fit,
+    unsigned sample_index(unsigned samples) { return samples == 8 ? 3 : samples == 4 ? 2 : samples == 2 ? 1 : 0; }
+
+    Texture& resolve_image(Texture& source) {
+        if (!source.resolved) return source;
+        end_rendering();
+        transition(source,nri::AccessBits::RESOLVE_SOURCE,nri::Layout::RESOLVE_SOURCE,nri::StageBits::RESOLVE);
+        transition(*source.resolved,nri::AccessBits::RESOLVE_DESTINATION,nri::Layout::RESOLVE_DESTINATION,nri::StageBits::RESOLVE);
+        core.CmdResolveTexture(*frame->commands,*source.resolved->object,nullptr,*source.object,nullptr,nri::ResolveOp::AVERAGE);
+        return *source.resolved;
+    }
+
+	void scale_image(Texture &input, Texture &target, unsigned w, unsigned h, bool fit,
 	                 nri::Pipeline *filter = nullptr, const Constants *parameters = nullptr)
 	{
 		end_rendering();
 		
+        Texture& source = resolve_image(input);
 		transition(source, nri::AccessBits::SHADER_RESOURCE, nri::Layout::SHADER_RESOURCE, nri::StageBits::FRAGMENT_SHADER);
 		transition(target, nri::AccessBits::COLOR_ATTACHMENT, nri::Layout::COLOR_ATTACHMENT, nri::StageBits::COLOR_ATTACHMENT);
 		
@@ -828,7 +897,7 @@ namespace
 		
 		core.CmdClearAttachments(*frame->commands, &black, 1, nullptr, 0);
 		core.CmdSetPipelineLayout(*frame->commands, nri::BindPoint::GRAPHICS, *layout);
-		core.CmdSetPipeline(*frame->commands, *(filter ? filter : present_pipeline));
+		core.CmdSetPipeline(*frame->commands, *(filter ? filter : copy_pipelines[sample_index(core.GetTextureDesc(*target.object).sampleNum)]));
 		if (parameters) {
 			nri::SetRootConstantsDesc root = {};
 			root.data = parameters;
@@ -864,16 +933,81 @@ namespace
 		core.CmdEndRendering(*frame->commands);
 	}
 
+    void smaa_image(Texture& source, Texture& target) {
+        end_rendering();
+        if (!smaa_area.object) {
+            make_texture(smaa_area,AREATEX_WIDTH,AREATEX_HEIGHT,nri::Format::RG8_UNORM,nri::TextureUsageBits::SHADER_RESOURCE,nri::TextureView::TEXTURE);
+            upload_texture(smaa_area,areaTexBytes,AREATEX_WIDTH,AREATEX_HEIGHT,0,2);
+            make_texture(smaa_search,SEARCHTEX_WIDTH,SEARCHTEX_HEIGHT,nri::Format::R8_UNORM,nri::TextureUsageBits::SHADER_RESOURCE,nri::TextureView::TEXTURE);
+            upload_texture(smaa_search,searchTexBytes,SEARCHTEX_WIDTH,SEARCHTEX_HEIGHT,0,1);
+        }
+        for (auto* tex : {&smaa_edges,&smaa_weights}) {
+            if (tex->object && (core.GetTextureDesc(*tex->object).width != base_width || core.GetTextureDesc(*tex->object).height != base_height)) retire(*tex);
+            if (!tex->object) {
+                make_texture(*tex,base_width,base_height,tex == &smaa_edges ? nri::Format::RG8_UNORM : nri::Format::RGBA8_UNORM,
+                    nri::TextureUsageBits::COLOR_ATTACHMENT|nri::TextureUsageBits::SHADER_RESOURCE,nri::TextureView::COLOR_ATTACHMENT);
+                nri::TextureViewDesc vd = {}; vd.texture=tex->object; vd.type=nri::TextureView::TEXTURE;
+                vd.mipNum=vd.layerNum=vd.sliceNum=1;
+                check(core.CreateTextureView(vd,tex->sample_view),"Create SMAA input view");
+            }
+        }
+        if (!frame->smaa_descriptors) {
+            nri::DescriptorPoolDesc pool = {}; pool.descriptorSetMaxNum=3; pool.textureMaxNum=9; pool.samplerMaxNum=6;
+            check(core.CreateDescriptorPool(*device,pool,frame->smaa_descriptors),"Create SMAA descriptors");
+        }
+        core.CmdSetDescriptorPool(*frame->commands,*frame->smaa_descriptors);
+        transition(source,nri::AccessBits::SHADER_RESOURCE,nri::Layout::SHADER_RESOURCE,nri::StageBits::FRAGMENT_SHADER);
+        transition(smaa_area,nri::AccessBits::SHADER_RESOURCE,nri::Layout::SHADER_RESOURCE,nri::StageBits::FRAGMENT_SHADER);
+        transition(smaa_search,nri::AccessBits::SHADER_RESOURCE,nri::Layout::SHADER_RESOURCE,nri::StageBits::FRAGMENT_SHADER);
+        for (unsigned i=0;i<3;++i) {
+            Texture& out = i==0 ? smaa_edges : i==1 ? smaa_weights : target;
+            transition(out,nri::AccessBits::COLOR_ATTACHMENT,nri::Layout::COLOR_ATTACHMENT,nri::StageBits::COLOR_ATTACHMENT);
+            nri::DescriptorSet* set=nullptr;
+            check(core.AllocateDescriptorSets(*frame->smaa_descriptors,*smaa_layout,0,&set,1,0),"Allocate SMAA set");
+            const nri::Descriptor* inputs[] = {i==1 ? smaa_edges.sample_view : source.sample_view,
+                i==1 ? smaa_area.view : i==2 ? smaa_weights.sample_view : source.sample_view,smaa_search.view};
+            const nri::Descriptor* samps[] = {samplers[7],smaa_point};
+            nri::UpdateDescriptorRangeDesc updates[2] = {};
+            updates[0].descriptorSet=updates[1].descriptorSet=set;
+            updates[0].descriptors=inputs; updates[0].descriptorNum=3;
+            updates[1].rangeIndex=1; updates[1].descriptors=samps; updates[1].descriptorNum=2;
+            core.UpdateDescriptorRanges(updates,2);
+            nri::AttachmentDesc color = {}; color.descriptor=out.view;
+            nri::RenderingDesc rendering = {}; rendering.colors=&color; rendering.colorNum=1;
+            core.CmdBeginRendering(*frame->commands,rendering);
+            nri::ClearAttachmentDesc zero = {}; zero.planes=nri::PlaneBits::COLOR;
+            core.CmdClearAttachments(*frame->commands,&zero,1,nullptr,0);
+            core.CmdSetPipelineLayout(*frame->commands,nri::BindPoint::GRAPHICS,*smaa_layout);
+            core.CmdSetPipeline(*frame->commands,*smaa_pipelines[i]);
+            Constants constants = {}; constants.surf_w=1.0f/base_width; constants.surf_h=1.0f/base_height;
+            constants.tex_w=(float)base_width; constants.tex_h=(float)base_height;
+            nri::SetRootConstantsDesc root = {}; root.data=&constants; root.size=sizeof(constants);
+            core.CmdSetRootConstants(*frame->commands,root);
+            nri::SetDescriptorSetDesc bind = {}; bind.descriptorSet=set; core.CmdSetDescriptorSet(*frame->commands,bind);
+            nri::Viewport vp={0,0,(float)base_width,(float)base_height,0,1}; core.CmdSetViewports(*frame->commands,&vp,1);
+            nri::Rect rect={0,0,(nri::Dim_t)base_width,(nri::Dim_t)base_height}; core.CmdSetScissors(*frame->commands,&rect,1);
+            nri::DrawDesc tri={3,1,0,0}; core.CmdDraw(*frame->commands,tri); core.CmdEndRendering(*frame->commands);
+            transition(out,nri::AccessBits::SHADER_RESOURCE,nri::Layout::SHADER_RESOURCE,nri::StageBits::FRAGMENT_SHADER);
+        }
+        core.CmdSetDescriptorPool(*frame->commands,*frame->descriptors);
+    }
+
 	void create_color_target(Texture &target, nri::Format format)
 	{
 		make_texture(target, render_width, render_height, format,
-			nri::TextureUsageBits::COLOR_ATTACHMENT | nri::TextureUsageBits::SHADER_RESOURCE, nri::TextureView::COLOR_ATTACHMENT);
+			nri::TextureUsageBits::COLOR_ATTACHMENT | nri::TextureUsageBits::SHADER_RESOURCE, nri::TextureView::COLOR_ATTACHMENT, 1, scene_samples);
 		nri::TextureViewDesc vd = {};
 		
 		vd.texture = target.object;
 		vd.type = nri::TextureView::TEXTURE;
 		vd.mipNum = vd.layerNum = vd.sliceNum = 1;
-		check(core.CreateTextureView(vd, target.sample_view), "Create scene sampling view");
+        if (scene_samples == 1) check(core.CreateTextureView(vd, target.sample_view), "Create scene sampling view");
+        else {
+            target.resolved = new Texture;
+            unsigned saved_samples = scene_samples; scene_samples = 1;
+            create_color_target(*target.resolved,format);
+            scene_samples = saved_samples;
+        }
 	}
 
 	void create_scene(nri::Format format)
@@ -881,7 +1015,7 @@ namespace
 		create_color_target(scene, format);
 		
 		make_texture(depth, render_width, render_height, nri::Format::D24_UNORM_S8_UINT,
-			nri::TextureUsageBits::DEPTH_STENCIL_ATTACHMENT, nri::TextureView::DEPTH_STENCIL_ATTACHMENT);
+			nri::TextureUsageBits::DEPTH_STENCIL_ATTACHMENT, nri::TextureView::DEPTH_STENCIL_ATTACHMENT, 1, scene_samples);
 	}
 
 	void select_guest_target(const Nv2aSurface *surface, const Nv2aRenderState *state)
@@ -902,7 +1036,7 @@ namespace
 		if (!z->object)
 		{
 			make_texture(*z, render_width, render_height, nri::Format::D24_UNORM_S8_UINT,
-				nri::TextureUsageBits::DEPTH_STENCIL_ATTACHMENT, nri::TextureView::DEPTH_STENCIL_ATTACHMENT);
+				nri::TextureUsageBits::DEPTH_STENCIL_ATTACHMENT, nri::TextureView::DEPTH_STENCIL_ATTACHMENT, 1, scene_samples);
 			clear_flags |= 3;
 			std::fprintf(stderr, "[NRI target] depth=%08X\n", state->zeta_va);
 		}
@@ -983,6 +1117,8 @@ namespace
 			for (auto &entry : textures)
 				destroy(entry.image);
 			
+			destroy(smaa_edges); destroy(smaa_weights); destroy(smaa_area); destroy(smaa_search);
+            destroy(aa_image);
 			destroy(movie);
 			destroy(scene);
 			destroy(depth);
@@ -1000,7 +1136,8 @@ namespace
 				for (auto *commands : f.chunks)
 					core.DestroyCommandBuffer(commands);
 				
-				core.DestroyCommandAllocator(f.allocator);
+				core.DestroyDescriptorPool(f.smaa_descriptors);
+                core.DestroyCommandAllocator(f.allocator);
 				core.DestroyFence(f.image_acquired);
 				for (auto* pool : f.descriptor_pools) core.DestroyDescriptorPool(pool);
 				
@@ -1015,14 +1152,19 @@ namespace
 			}
 			
 			destroy_output();
-			for (auto &by_texture : pipelines)
+			for (auto &by_samples : pipelines)
+            for (auto &by_texture : by_samples)
 				for (auto &by_depth : by_texture)
 					for (auto pipeline : by_depth)
 						core.DestroyPipeline(pipeline);
 					
-			core.DestroyPipeline(present_pipeline);
+			for (unsigned i=1;i<4;++i) core.DestroyPipeline(copy_pipelines[i]);
+            core.DestroyPipeline(present_pipeline);
 			core.DestroyPipeline(fxaa_pipeline);
 			core.DestroyPipeline(ssaa_pipeline);
+            for (auto* p : smaa_pipelines) core.DestroyPipeline(p);
+            core.DestroyPipelineLayout(smaa_layout);
+            core.DestroyDescriptor(smaa_point);
 			destroy(aa_image);
 			for (auto *sampler : samplers)
 				core.DestroyDescriptor(sampler);
@@ -1184,6 +1326,7 @@ namespace
 		
 		core.ResetCommandAllocator(*frame->allocator);
 		for (auto* pool : frame->descriptor_pools) core.ResetDescriptorPool(*pool);
+        if (frame->smaa_descriptors) core.ResetDescriptorPool(*frame->smaa_descriptors);
 		frame->descriptor_pool_index = frame->descriptor_sets_used = 0;
 		frame->descriptors = frame->descriptor_pools.front();
 		check(core.BeginCommandBuffer(*frame->commands, frame->descriptors), "Begin frame commands");
@@ -1206,7 +1349,13 @@ namespace
 			for (unsigned a = 2; a < graphics_anisotropy(); a *= 2)
 				++active_sampler;
 			
-		if (rw != render_width || rh != render_height)
+        unsigned requested_samples = active_aa == 2 ? graphics_msaa_samples() : 1;
+        unsigned selected_samples = requested_samples;
+        while (selected_samples > 1 && !(supported_msaa & selected_samples)) selected_samples /= 2;
+        if (selected_samples != requested_samples && requested_samples != last_msaa_request)
+            std::fprintf(stderr,"[NRI] Requested MSAA %ux unsupported; using %ux\n",requested_samples,selected_samples);
+        last_msaa_request = requested_samples;
+        if (rw != render_width || rh != render_height || selected_samples != scene_samples)
 		{
 			end_rendering();
 			Texture *saved_color = active_color, *saved_depth = active_depth;
@@ -1215,6 +1364,7 @@ namespace
 			Texture previous = scene;
 			scene = {};
 			retire(depth);
+            scene_samples = selected_samples;
 			render_width = rw;
 			render_height = rh;
 			create_scene(core.GetTextureDesc(*previous.object).format);
@@ -1236,14 +1386,14 @@ namespace
 			{
 				retire(target.second);
 				make_texture(target.second, rw, rh, nri::Format::D24_UNORM_S8_UINT,
-					nri::TextureUsageBits::DEPTH_STENCIL_ATTACHMENT, nri::TextureView::DEPTH_STENCIL_ATTACHMENT);
+					nri::TextureUsageBits::DEPTH_STENCIL_ATTACHMENT, nri::TextureView::DEPTH_STENCIL_ATTACHMENT, 1, scene_samples);
 				active_depth = &target.second;
 				clear(3, 0, 0xFFFFFF00);
 				end_rendering();
 			}
 			active_color = saved_color;
 			active_depth = saved_depth;
-			std::fprintf(stderr, "[NRI] Internal resolution %ux%u (window %ux%u)\n", rw, rh, width, height);
+			std::fprintf(stderr, "[NRI] Internal resolution %ux%u, samples %u (window %ux%u)\n", rw, rh, scene_samples, width, height);
 		}
 
 		if (initial_clear)
@@ -1303,7 +1453,7 @@ namespace
 			
 		begin_rendering();
 		core.CmdSetPipelineLayout(*frame->commands, nri::BindPoint::GRAPHICS, *layout);
-		core.CmdSetPipeline(*frame->commands, *pipelines[image ? 1 : 0][z][blend]);
+		core.CmdSetPipeline(*frame->commands, *pipelines[sample_index(scene_samples)][image ? 1 : 0][z][blend]);
 		
 		nri::SetRootConstantsDesc root = {};
 		root.data = &constants;
@@ -1531,8 +1681,8 @@ namespace
         check(acquired, "Acquire swapchain image");
 		
 		Texture &output = outputs.at(index);
-		Texture *image = active_color;
-		if (active_aa == 1 || active_aa == 3) {
+		Texture *image = &resolve_image(*active_color);
+		if (active_aa == 1 || active_aa == 3 || active_aa == 4) {
 			if (aa_image.object) {
 				const auto &desc = core.GetTextureDesc(*aa_image.object);
 				if (desc.width != base_width || desc.height != base_height) retire(aa_image);
@@ -1551,7 +1701,8 @@ namespace
 			parameters.surf_h = 1.0f / render_height;
 			parameters.tex_w = (float)aa_grid_x(active_aa);
 			parameters.tex_h = (float)aa_grid_y(active_aa, ssaa_samples);
-			scale_image(*image, aa_image, base_width, base_height, false,
+			if (active_aa == 4) smaa_image(*image,aa_image);
+            else scale_image(*image, aa_image, base_width, base_height, false,
 				active_aa == 3 ? fxaa_pipeline : ssaa_pipeline, &parameters);
 			image = &aa_image;
 		}

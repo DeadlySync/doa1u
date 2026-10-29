@@ -15,7 +15,8 @@
 | `assets` | Shared asset-loading shadows |
 | `diagnostics` | Optional probes and RenderDoc capture; excluded unless enabled |
 | `recomp/gen` | Generated guest code; keep generator layout and reapply rules |
-| `third_party` | Vendored headers; preserve upstream layout and licenses |
+| `third_party` | External dependency headers/source; preserve upstream layout and licenses |
+| `xboxrecomp` | Tracked DOA1U runtime overrides applied over the external dependency |
 
 `main.c` remains the host entry point. `source_layout.json` maps former root
 filenames to their current locations (documentation paths are port-relative).
@@ -81,3 +82,33 @@ Use `RECOMP_TEST_MATCH=1` for the existing diagnostic match (Kasumi versus CPU J
 `RECOMP_STAGE_ID=0..12` overrides the stage; `-1` restores automatic selection.
 The retired force-Arcade harness and its launch scripts have been removed.
 `RECOMP_FLOW_TRACE=1` remains a read-only frontend trace.
+
+## xboxrecomp local overrides
+
+`xboxrecomp/` preserves DOA1U changes relative to external xboxrecomp baseline
+`ae9cb00b295eb418f120e6f7f02f43be8cea080b`. It is an override set, not a full
+runtime fork. Edit these tracked copies, not the external dependency. Upstream
+licensing is retained in `xboxrecomp/LICENSE`.
+
+CMake copies unchanged dependency sources into `build/xboxrecomp-runtime`,
+then overlays this directory before adding the runtime targets. Source and
+header selection therefore agree, including quoted includes. No changes are
+written to the original dependency. Reconfigure after adding/removing override
+files; edits to existing files also trigger CMake regeneration.
+
+| Files beneath `src/xboxrecomp/` | DOA1U changes |
+| --- | --- |
+| `src/input/keyboard.c`, `tests/input_keyboard/test_main.c` | Latch short Enter/Start presses between guest polls; cover release/repeat behavior. |
+| `src/input/xinput_device.c` | Sample controllers on a worker; avoid blocking gameplay on device discovery and empty-slot polling. |
+| `src/kernel/kernel_bridge.c` | Rebase stalled vblank schedules without rapid catch-up; route virtual-device operations. |
+| `src/kernel/kernel_virtual_disk.c`, `.h` | Sparse process-local raw partition devices; persistent saves remain ordinary files, not disk images. |
+| `src/kernel/kernel_file.c`, `kernel_path.c` | Route raw-device I/O and partition aliases to the virtual backend while retaining native save directories. |
+| `src/kernel/CMakeLists.txt` | Compile the virtual-device backend. |
+| `src/kernel/nv2a_backend.h` | Share explicit screen-space/presentation metadata with the port renderer. |
+| `src/kernel/nv2a_pb_exec.c` | Ordered presentation markers, inline XYZ fixed-function transforms, bulk P8 decode, executor fence handling and opt-in verbose draw logs. |
+| `src/kernel/nv2a_pb_scan.c` | Follow actual ring JUMPs and retain split packets/CALL state; fixes skipped commands and user-confirmed flicker while retaining default GET timing. |
+| `src/kernel/xbox_memory_layout.c`, `.h` | Executor-owned fence completion, event-assisted GPU waits, real wrap traversal and separation of functional rendering from optional tracing. |
+
+The external dependency still supplies all unchanged runtime code and headers.
+Do not replace it with this partial override directory. Generated game code is
+tracked in `recomp/gen/`, including manual repairs; do not regenerate blindly.

@@ -15,7 +15,8 @@ endif()
 
 set(XBOXRECOMP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../xboxrecomp" CACHE PATH
     "Path to the xboxrecomp toolkit")
-add_subdirectory("${XBOXRECOMP_DIR}" "${CMAKE_BINARY_DIR}/xboxrecomp")
+include(cmake/XboxrecompOverlay.cmake)
+add_subdirectory("${DOA1U_XBOXRECOMP_RUNTIME_DIR}" "${CMAKE_BINARY_DIR}/xboxrecomp")
 
 
 # Pinned, vendored NRI. Initial parity backend is D3D11; no online configure downloads.
@@ -94,7 +95,7 @@ target_include_directories(audio_bank_check PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}
 add_executable(widescreen_shadow_check EXCLUDE_FROM_ALL
     tools/widescreen_shadow_check.c src/render/widescreen.c)
 target_include_directories(widescreen_shadow_check PRIVATE
-    "${CMAKE_CURRENT_SOURCE_DIR}/src" "${XBOXRECOMP_DIR}/src/kernel")
+    "${CMAKE_CURRENT_SOURCE_DIR}/src" "${DOA1U_XBOXRECOMP_RUNTIME_DIR}/src/kernel")
 target_link_libraries(${PROJECT_NAME} PRIVATE xboxrecomp doa1u_imgui NRI
     d3d11 dxgi dxguid d3dcompiler xinput winmm dbghelp)
 if(DOA1U_DIAGNOSTIC)
@@ -106,8 +107,8 @@ endif()
 target_include_directories(${PROJECT_NAME} PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/recomp"
-    "${XBOXRECOMP_DIR}/include"
-    "${XBOXRECOMP_DIR}/src/kernel"
+    "${DOA1U_XBOXRECOMP_RUNTIME_DIR}/include"
+    "${DOA1U_XBOXRECOMP_RUNTIME_DIR}/src/kernel"
 )
 
 if(MSVC)

@@ -28,17 +28,21 @@ Debug/
 Release/
 x64/
 
-# Generated recompiled code (regenerate from XBE with the recomp pipeline)
-src/recomp/gen/
+# Generated code is intentionally tracked: it contains required manual repairs.
 
 # Game files (user must provide their own legally-owned copies)
-game/
+/game/
 *.xbe
 *.iso
 *.xiso
 .backups/
 build*/
-docs/
+/docs/crash-capture.md
+/docs/reports/
+/docs/**/reports/
+/docs/**/*report*.log
+/docs/**/*.dmp
+/docs/**/*.rdc
 
 # IDE
 .vscode/
@@ -210,4 +214,16 @@ src/third_party/renderdoc_app.h
 Thumbs.db
 .DS_Store
 /tools/ghidra_out
-/tools
+/tools/*
+!/tools/reapply_gen_edits.py
+!/tools/relift_compile_fixes.py
+!/tools/fix_game_loop_cycle.py
+!/tools/audit_source.py
+!/tools/check_*.py
+!/tools/check_source_config.cmake
+!/tools/check_pb_submission.c
+!/tools/audio_bank_check.c
+!/tools/widescreen_shadow_check.c
+!/tools/crash_capture_check.c
+!/tools/fiber_runtime_check.c
+!/tools/REGRESSION_TESTS.md

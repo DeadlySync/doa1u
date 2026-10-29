@@ -1,0 +1,60 @@
+# Build artifacts
+build/
+out/
+bin/
+*.obj
+*.o
+*.lib
+*.a
+*.exe
+*.dll
+*.pdb
+*.ilk
+*.exp
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+
+# Visual Studio
+.vs/
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+*.sln
+Debug/
+Release/
+x64/
+
+# Generated recompiled code (regenerate from XBE with the recomp pipeline)
+src/recomp/gen/
+
+# Game files (user must provide their own legally-owned copies)
+game/
+*.xbe
+*.iso
+*.xiso
+.backups/
+build*/
+docs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# third_party
+src/third_party/imgui
+src/third_party/NRI
+src/third_party/pl_mpeg.h
+src/third_party/renderdoc_app.h
+
+# OS
+Thumbs.db
+.DS_Store
+/tools/ghidra_out
+/tools

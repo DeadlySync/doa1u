@@ -81,7 +81,7 @@ namespace
 		char text[2048];
 		int count = snprintf(text, sizeof text,
 							 "; DOA1U host graphics preferences. Aspect, window and NRI resolution/filtering are active.\r\n"
-							 "; GPU, backend and AA controls are saved placeholders.\r\n"
+							 "; NRI SSAA/FXAA are active. GPU/backend/MSAA/SMAA remain unavailable.\r\n"
 							 "; Resolution values below are preset indices, independently per aspect.\r\n"
 							 "[Graphics]\r\nVersion=1\r\nAspectRatio=%d\r\n"
 							 "Window43=%d\r\nWindow169=%d\r\nRender43=%d\r\nRender169=%d\r\n"
@@ -321,18 +321,27 @@ namespace
 			
 			if (ImGui::CollapsingHeader("Anti-aliasing", ImGuiTreeNodeFlags_DefaultOpen))
 			{
-				ImGui::TextDisabled("Not implemented yet.");
-				settings_combo("AA method", &prefs.aa, "Off\0SSAA\0MSAA\0FXAA\0SMAA\0");
-				if (prefs.aa == 1)
-					settings_combo("SSAA samples", &prefs.ssaa,
-								 "2x\0"
-								 "4x\0");
-								 
-				if (prefs.aa == 2)
-					settings_combo("MSAA samples", &prefs.msaa,
-								 "2x\0"
-								 "4x\0"
-								 "8x\0");
+				const bool supported = std::string(renderer_name) == "NRI / DirectX 11";
+				ImGui::BeginDisabled(!supported);
+				const char *names[] = {"Off", "SSAA", "MSAA (unavailable)", "FXAA", "SMAA (unavailable)"};
+				if (begin_settings_combo("AA method", names[prefs.aa])) {
+					for (int i = 0; i < 5; ++i) {
+						ImGui::BeginDisabled(i == 2 || i == 4);
+						if (ImGui::Selectable(names[i], prefs.aa == i)) prefs.aa = i;
+						ImGui::EndDisabled();
+					}
+					ImGui::EndCombo();
+				}
+				if (prefs.aa == 1) {
+					settings_combo("SSAA samples", &prefs.ssaa, "2x (2 x 1)\0" "4x (2 x 2)\0");
+					const Size size = prefs.aspect ? sizes169[prefs.render169] : sizes43[prefs.render43];
+					ImGui::Text("Render size: %d x %d", size.w * 2, size.h * (prefs.ssaa ? 2 : 1));
+					ImGui::TextWrapped("Supersampling increases GPU work and memory use. Applies next frame.");
+				} else if (prefs.aa == 3) {
+					ImGui::TextWrapped("FXAA smooths high-contrast edges without increasing render resolution. Applies next frame.");
+				}
+				ImGui::EndDisabled();
+				if (!supported) ImGui::TextWrapped("Anti-aliasing requires the NRI renderer.");
 			}
 			
 			ImGui::EndChild();
@@ -417,6 +426,16 @@ extern "C" void graphics_render_size(unsigned *width, unsigned *height)
 	const Size size = prefs.aspect ? sizes169[prefs.render169] : sizes43[prefs.render43];
 	*width = (unsigned)size.w;
 	*height = (unsigned)size.h;
+}
+
+extern "C" int graphics_aa_method(void)
+{
+	return prefs.aa == 1 || prefs.aa == 3 ? prefs.aa : 0;
+}
+
+extern "C" unsigned graphics_ssaa_samples(void)
+{
+	return prefs.ssaa ? 4u : 2u;
 }
 
 extern "C" int graphics_texture_filter(void)

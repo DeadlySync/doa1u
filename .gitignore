@@ -227,3 +227,5 @@ Thumbs.db
 !/tools/crash_capture_check.c
 !/tools/fiber_runtime_check.c
 !/tools/REGRESSION_TESTS.md
+
+!/tools/antialiasing_check.cpp

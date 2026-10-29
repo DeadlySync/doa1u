@@ -16,6 +16,9 @@ void graphics_render_size(unsigned *width, unsigned *height);
 
 int graphics_texture_filter(void);
 unsigned graphics_anisotropy(void);
+/* Stable INI IDs: Off=0, SSAA=1, FXAA=3; other IDs are not implemented. */
+int graphics_aa_method(void);
+unsigned graphics_ssaa_samples(void);
 
 /* Apply saved/live client-size preset between frames on the window thread. */
 void graphics_window_apply(void *window);

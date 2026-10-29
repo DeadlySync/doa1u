@@ -17,7 +17,8 @@
 **Aspect ratio and window size are active. Internal resolution and texture filtering
 are now active on NRI/D3D11.** The default renderer now uses
 NRI's D3D11 backend; the legacy direct-D3D11 renderer remains available for
-comparison/fallback. GPU/API selection and AA controls remain saved placeholders.
+comparison/fallback. FXAA and 2x/4x SSAA are active on NRI/D3D11;
+GPU/API selection remains a saved placeholder.
 New resolution/filtering functionality is NRI-only; legacy retains its previous
 window-sized framebuffer and fixed filtering.
 See [NRI migration](nri-renderer.md) for architecture, fallback and test handoff.
@@ -32,7 +33,7 @@ resolution choices are not restricted by monitor size.
 - 16:9 window/internal presets: 1280x720, 1600x900, 1920x1080, 2560x1440,
   3200x1800, 3840x2160. Window fit restrictions still apply.
 - Filtering: nearest, bilinear, trilinear, anisotropic (2/4/8/16x).
-- AA: Off, SSAA (2/4 samples), MSAA (2/4/8 samples), FXAA, SMAA.
+- AA: Off, SSAA (2/4 samples), FXAA. MSAA/SMAA are visible but disabled.
 - Temporal methods (TAA, DLSS, DLAA, FSR 4.1) and frame generation are out of
   scope following the user's correction; no inactive temporal controls added.
 
@@ -153,3 +154,35 @@ Suggested checks: keep window fixed and change internal resolution low/high in
 both aspects; compare all filters, especially floor minification under trilinear
 and anisotropy2x vs16x; resize manually; change internal size while paused;
 inspect HUD/movies/frontend artwork; save, ESC restart, verify selections reload.
+
+## Non-temporal anti-aliasing (2026-10-28)
+
+Open **F1 > Anti-aliasing** and select **FXAA** or **SSAA**. Changes apply at
+the next frame boundary; **Save configuration** persists them. Off is still the
+default. This section supersedes earlier placeholder/validation notes above.
+
+- **FXAA:** spatial luma-contrast edge filtering at the selected internal
+  resolution. No motion history or jitter. Flat regions bypass filtering.
+  This compact shader follows the edge-directed approach described in the
+  [NVIDIA FXAA white paper](https://developer.download.nvidia.com/assets/gamedev/files/sdk/11/FXAA_WhitePaper.pdf).
+- **2x SSAA:** render at twice the internal width, then average each 2x1 sample
+  pair. **4x SSAA:** double both axes and average each 2x2 block. Pixel aspect
+  remains correct; 2x SSAA improves horizontal sampling only. The displayed
+  render size makes the extra GPU/memory cost explicit.
+- Both paths produce an internal-resolution image before ordinary window
+  scaling. Therefore window resize/downsampling is independent of AA mode.
+- Native settings UI is drawn afterward and stays sharp. Original Xbox HUD
+  and movies are part of the guest scene and are included in the AA pass.
+- Guest color/depth identities and fence ordering are unchanged. Mode, sample
+  count and resolution changes reuse the existing fence-retired resize path;
+  retained scenes are resampled, not discarded during pause.
+- Existing INI method IDs remain unchanged (Off0, SSAA1, MSAA2, FXAA3, SMAA4).
+  Saved MSAA/SMAA values safely run as Off until a supported mode is selected.
+  Legacy D3D11 fallback does not implement AA; its AA controls are disabled.
+
+Offline validation uses actual production HLSL on D3D11 WARP, with pixel
+readback: flat colors/borders/alpha preservation, smoothing of a high-contrast
+stair-step diagonal, distant flat-region preservation, exact 2x/4x sample
+averages and non-power-of-two dimensions. Shader compilation and existing
+color-target/depth/alpha regressions also pass. In-game appearance/performance
+and live mode switching still need user validation; no game automation is used.

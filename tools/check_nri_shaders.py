@@ -49,3 +49,7 @@ for name, profile in [("HLSL_VS", "vs_5_0"), ("HLSL_PS_TEX", "ps_5_0"),
     check(extract(shared, name), name, profile)
 for name, profile in [("present_vs", "vs_5_0"), ("present_ps", "ps_5_0")]:
     check(extract(backend, name), name, profile)
+
+aa = (ROOT / "src/render/common/antialiasing.h").read_text()
+for name in ["HLSL_FXAA", "HLSL_SSAA"]:
+    check(extract(aa, name), name, "ps_5_0")

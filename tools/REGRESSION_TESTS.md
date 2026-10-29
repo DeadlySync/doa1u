@@ -6,6 +6,7 @@ the workspace root in an x64 Visual Studio Developer Command Prompt with Python.
 
 | Check in doa1u_port/tools | Purpose |
 | --- | --- |
+| antialiasing_check.cpp | Production FXAA/SSAA shaders on headless D3D11 WARP, with pixel readback |
 | check_pb_submission.c | Real pushbuffer decoder: wraps, split packets, CALL/RETURN, GET timing |
 | check_head_pose_gate.py | Lifted head gate including observed downed/victory cases |
 | check_test_match_selection.py | Diagnostic selection and one-time scene-mode initialization |
@@ -30,3 +31,10 @@ doa1u_port\build\check_pb_submission.exe
 
 The resolved rendering investigation record is in
 reference/investigations/resolved-rendering-20261028/README.md.
+
+AA regression, from the port root (no game/window/hardware GPU):
+
+```powershell
+cmake --build build --config Release --target antialiasing_check
+./build/Release/antialiasing_check.exe
+```

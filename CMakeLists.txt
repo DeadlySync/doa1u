@@ -92,6 +92,11 @@ target_link_libraries(doa1u_imgui PRIVATE d3d11 d3dcompiler dwmapi)
 add_executable(audio_bank_check EXCLUDE_FROM_ALL
     tools/audio_bank_check.c src/audio/xbox_adpcm.c)
 target_include_directories(audio_bank_check PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+# WARP-only AA shader/readback regression: no window, game, or hardware GPU.
+add_executable(antialiasing_check EXCLUDE_FROM_ALL tools/antialiasing_check.cpp)
+target_include_directories(antialiasing_check PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_link_libraries(antialiasing_check PRIVATE d3d11 d3dcompiler)
+
 add_executable(widescreen_shadow_check EXCLUDE_FROM_ALL
     tools/widescreen_shadow_check.c src/render/widescreen.c)
 target_include_directories(widescreen_shadow_check PRIVATE

@@ -8,7 +8,8 @@ Recompilation for Dead or Alive 1 - ULTIMATE from the OG XBOX
   - I have no idea how to code netcode.
 * Direct3D 11 rendering through NRI. D3D12/Vulkan switching is not implemented yet.
 * Independent internal resolution and downsampling.
-* Dedicated SSAA/MSAA/FXAA/SMAA are planned; the current AA selectors are placeholders.
+* Non-temporal anti-aliasing: FXAA and 2x/4x SSAA (NRI/D3D11).
+  - MSAA/SMAA are not implemented; their selectors are disabled.
 * Texture Filtering
   - Nearest-neighbor
   - Bilinear

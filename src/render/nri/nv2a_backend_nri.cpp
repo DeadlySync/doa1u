@@ -22,6 +22,7 @@
 #include <vector>
 #include "render/graphics_settings.h"
 #include "render/common/guest_shaders.h"
+#include "render/common/antialiasing.h"
 
 extern "C"
 {
@@ -96,15 +97,17 @@ namespace
 	nri::SwapChain *swapchain;
 	nri::Fence *fence, *acquire, *release;
 	nri::PipelineLayout *layout;
-	nri::Pipeline *present_pipeline;
+	nri::Pipeline *present_pipeline, *fxaa_pipeline, *ssaa_pipeline;
 	nri::Descriptor *samplers[8] = {}; // nearest, bilinear, trilinear, aniso 2/4/8/16, presentation
 	unsigned render_width = 640, render_height = 480, active_sampler = 1;
+	unsigned base_width = 640, base_height = 480, ssaa_samples = 4;
+	int active_aa;
 	nri::Pipeline *pipelines[2][3][2] = {}; // textured, depth off/read/write, blend
 	
 	std::array<Frame, FrameCount> frames;
 	
 	Frame *frame;
-	Texture scene, depth, movie;
+	Texture scene, depth, movie, aa_image;
 	// Guest backbuffers and depth surfaces have independent memory identities.
 	std::map<uint32_t, Texture> color_targets, depth_targets;
 	Texture *active_color = &scene, *active_depth = &depth;
@@ -754,6 +757,11 @@ namespace
 		pd.shaders = shaders;
 		pd.shaderNum = 2;
 		check(core.CreateGraphicsPipeline(*device, pd, present_pipeline), "Create presentation pipeline");
+		auto fxaa = compile(HLSL_FXAA, "ps_5_0"), ssaa = compile(HLSL_SSAA, "ps_5_0");
+		shaders[1] = {nri::StageBits::FRAGMENT_SHADER, fxaa.data(), fxaa.size(), "main"};
+		check(core.CreateGraphicsPipeline(*device, pd, fxaa_pipeline), "Create FXAA pipeline");
+		shaders[1] = {nri::StageBits::FRAGMENT_SHADER, ssaa.data(), ssaa.size(), "main"};
+		check(core.CreateGraphicsPipeline(*device, pd, ssaa_pipeline), "Create SSAA resolve pipeline");
 
 	}
 
@@ -780,7 +788,8 @@ namespace
 		core.CmdSetDescriptorSet(*frame->commands, bind);
 	}
 
-	void scale_image(Texture &source, Texture &target, unsigned w, unsigned h, bool fit)
+	void scale_image(Texture &source, Texture &target, unsigned w, unsigned h, bool fit,
+	                 nri::Pipeline *filter = nullptr, const Constants *parameters = nullptr)
 	{
 		end_rendering();
 		
@@ -801,14 +810,20 @@ namespace
 		
 		core.CmdClearAttachments(*frame->commands, &black, 1, nullptr, 0);
 		core.CmdSetPipelineLayout(*frame->commands, nri::BindPoint::GRAPHICS, *layout);
-		core.CmdSetPipeline(*frame->commands, *present_pipeline);
+		core.CmdSetPipeline(*frame->commands, *(filter ? filter : present_pipeline));
+		if (parameters) {
+			nri::SetRootConstantsDesc root = {};
+			root.data = parameters;
+			root.size = sizeof(*parameters);
+			core.CmdSetRootConstants(*frame->commands, root);
+		}
 		
 		bind_image(source.sample_view, 7);
 		nri::Viewport viewport = {0, 0, (float)w, (float)h, 0, 1};
 		
 		if (fit)
 		{
-			float aspect = (float)render_width / render_height;
+			float aspect = (float)base_width / base_height;
 			if (viewport.width / viewport.height > aspect)
 			{
 				viewport.width = viewport.height * aspect;
@@ -987,6 +1002,9 @@ namespace
 						core.DestroyPipeline(pipeline);
 					
 			core.DestroyPipeline(present_pipeline);
+			core.DestroyPipeline(fxaa_pipeline);
+			core.DestroyPipeline(ssaa_pipeline);
+			destroy(aa_image);
 			for (auto *sampler : samplers)
 				core.DestroyDescriptor(sampler);
 			
@@ -1068,7 +1086,11 @@ namespace
 			check(core.CreateDescriptorPool(*device, pool, f.descriptors), "Create frame descriptor pool");
 		}
 		
-		graphics_render_size(&render_width, &render_height);
+		graphics_render_size(&base_width, &base_height);
+		active_aa = graphics_aa_method();
+		ssaa_samples = graphics_ssaa_samples();
+		render_width = base_width * aa_grid_x(active_aa);
+		render_height = base_height * aa_grid_y(active_aa, ssaa_samples);
 		create_output();
 		
 		// No throwing initialization remains after ImGui takes ownership of its context.
@@ -1144,7 +1166,12 @@ namespace
 		QueryPerformanceCounter(&chunk_started);
 		
 		unsigned rw, rh;
-		graphics_render_size(&rw, &rh);
+		graphics_render_size(&base_width, &base_height);
+		active_aa = graphics_aa_method();
+		ssaa_samples = graphics_ssaa_samples();
+		rw = base_width * aa_grid_x(active_aa);
+		rh = base_height * aa_grid_y(active_aa, ssaa_samples);
+		if (active_aa == 0) retire(aa_image);
 		
 		int filtering = graphics_texture_filter();
 		active_sampler = filtering == 3 ? 3 : (unsigned)filtering;
@@ -1262,20 +1289,24 @@ namespace
 
 		nri::VertexBufferDesc vb = {vertices.buffer, vertices.offset, sizeof(Nv2aVertex)};
 		core.CmdSetVertexBuffers(*frame->commands, 0, &vb, 1);
-		nri::Viewport viewport = {0, 0, (float)render_width, (float)render_height, 0, 1};
+		nri::Viewport viewport = {0, 0, (float)base_width, (float)base_height, 0, 1};
 		float aspect = graphics_widescreen() ? 16.0f / 9.0f : 4.0f / 3.0f;
 		
 		if (viewport.width / viewport.height > aspect)
 		{
 			viewport.width = viewport.height * aspect;
-			viewport.x = (render_width - viewport.width) * 0.5f;
+			viewport.x = (base_width - viewport.width) * 0.5f;
 		}
 		else
 		{
 			viewport.height = viewport.width / aspect;
-			viewport.y = (render_height - viewport.height) * 0.5f;
+			viewport.y = (base_height - viewport.height) * 0.5f;
 		}
 		
+		viewport.x *= aa_grid_x(active_aa);
+		viewport.width *= aa_grid_x(active_aa);
+		viewport.y *= aa_grid_y(active_aa, ssaa_samples);
+		viewport.height *= aa_grid_y(active_aa, ssaa_samples);
 		core.CmdSetViewports(*frame->commands, &viewport, 1);
 		nri::Rect scissor = {0, 0, (nri::Dim_t)render_width, (nri::Dim_t)render_height};
 		
@@ -1461,7 +1492,31 @@ namespace
 		check(presentation.AcquireNextTexture(*swapchain, *acquire, index), "Acquire swapchain image");
 		
 		Texture &output = outputs.at(index);
-		scale_image(*active_color, output, width, height, true);
+		Texture *image = active_color;
+		if (active_aa == 1 || active_aa == 3) {
+			if (aa_image.object) {
+				const auto &desc = core.GetTextureDesc(*aa_image.object);
+				if (desc.width != base_width || desc.height != base_height) retire(aa_image);
+			}
+			if (!aa_image.object) {
+				make_texture(aa_image, base_width, base_height, core.GetTextureDesc(*image->object).format,
+					nri::TextureUsageBits::COLOR_ATTACHMENT | nri::TextureUsageBits::SHADER_RESOURCE,
+					nri::TextureView::COLOR_ATTACHMENT);
+				nri::TextureViewDesc vd = {};
+				vd.texture = aa_image.object; vd.type = nri::TextureView::TEXTURE;
+				vd.mipNum = vd.layerNum = vd.sliceNum = 1;
+				check(core.CreateTextureView(vd, aa_image.sample_view), "Create AA image view");
+			}
+			Constants parameters = {};
+			parameters.surf_w = 1.0f / render_width;
+			parameters.surf_h = 1.0f / render_height;
+			parameters.tex_w = (float)aa_grid_x(active_aa);
+			parameters.tex_h = (float)aa_grid_y(active_aa, ssaa_samples);
+			scale_image(*image, aa_image, base_width, base_height, false,
+				active_aa == 3 ? fxaa_pipeline : ssaa_pipeline, &parameters);
+			image = &aa_image;
+		}
+		scale_image(*image, output, width, height, true);
 
 		submit_commands();
 

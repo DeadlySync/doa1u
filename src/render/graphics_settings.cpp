@@ -29,12 +29,15 @@ namespace
 	struct Preferences
 	{
 		int aspect = 0, window43 = 0, window169 = 0, render43 = 0, render169 = 0;
+		bool sharp2d = true, snn2d = false; // dormant experiments
+        bool lanczos2d = true;
+        int lanczos_ar = 80;
 		int backend = 0, filtering = 1, anisotropy = 3, aa = 0, ssaa = 1, msaa = 1;
 		
 		std::string adapter = "automatic";
 		bool differs(const Preferences &o) const
 		{
-			return aspect != o.aspect || window43 != o.window43 || window169 != o.window169
+			return lanczos2d != o.lanczos2d || lanczos_ar != o.lanczos_ar || snn2d != o.snn2d || sharp2d != o.sharp2d || aspect != o.aspect || window43 != o.window43 || window169 != o.window169
 				   || render43 != o.render43 || render169 != o.render169 || backend != o.backend
 				   || filtering != o.filtering || anisotropy != o.anisotropy || aa != o.aa || ssaa != o.ssaa
 				   || msaa != o.msaa || adapter != o.adapter;
@@ -86,7 +89,7 @@ namespace
 							 "[Graphics]\r\nVersion=1\r\nAspectRatio=%d\r\n"
 							 "Window43=%d\r\nWindow169=%d\r\nRender43=%d\r\nRender169=%d\r\n"
 							 "Adapter=%s\r\nBackend=%d\r\nFiltering=%d\r\nAnisotropy=%d\r\n"
-							 "AntiAliasing=%d\r\nSSAA=%d\r\nMSAA=%d\r\n",
+							 "Lanczos2D=%d\r\nLANCZOS2_AR_STRENGTH=%d\r\nSharp2D=%d\r\nSNN2D=%d\r\nAntiAliasing=%d\r\nSSAA=%d\r\nMSAA=%d\r\n",
 							 prefs.aspect, 
 							 prefs.window43, 
 							 prefs.window169, 
@@ -96,6 +99,9 @@ namespace
 							 prefs.backend, 
 							 prefs.filtering, 
 							 prefs.anisotropy, 
+							 prefs.lanczos2d ? 1 : 0, prefs.lanczos_ar,
+                             prefs.sharp2d ? 1 : 0,
+                             prefs.snn2d ? 1 : 0,
 							 prefs.aa,
 							 prefs.ssaa, 
 							 prefs.msaa);
@@ -309,8 +315,13 @@ namespace
 			
 			if (ImGui::CollapsingHeader("Texture filtering", ImGuiTreeNodeFlags_DefaultOpen))
 			{
-				settings_combo("Filter", &prefs.filtering, "Nearest-neighbor\0Bilinear\0Trilinear\0Anisotropic\0");
-				ImGui::TextWrapped("Filtering applies next frame. FMV use bilinear filtering.");
+				settings_combo("3D texture filter", &prefs.filtering, "Nearest-neighbor\0Bilinear\0Trilinear\0Anisotropic\0");
+				const bool nri_supported = std::string(renderer_name).find("NRI / ") == 0;
+                ImGui::BeginDisabled(!nri_supported);
+                ImGui::Checkbox("2D filtering (Lanczos2 + anti-ringing)", &prefs.lanczos2d);
+                ImGui::SliderInt("Anti-ringing strength", &prefs.lanczos_ar, 0, 100, "%d%%");
+                ImGui::EndDisabled();
+				ImGui::TextWrapped("Lanczos2 filters 2D artwork during scaling. Anti-ringing: 0% unclamped, 100% fully clamped. Live adjustment; no rebuild. Size unchanged. Movies stay bilinear.");
 				if (prefs.filtering == 3)
 					settings_combo("Anisotropy", &prefs.anisotropy,
 								 "2x\0"
@@ -396,6 +407,10 @@ extern "C" void graphics_settings_init(void)
 	prefs.render43 = read_int(L"Render43", 0, 10);
 	prefs.render169 = read_int(L"Render169", 0, 5);
 	prefs.backend = read_int(L"Backend", 0, 2);
+	prefs.lanczos2d = read_int(L"Lanczos2D", 1, 1) != 0;
+    prefs.lanczos_ar = read_int(L"LANCZOS2_AR_STRENGTH", 80, 100);
+	prefs.snn2d = read_int(L"SNN2D", 0, 1) != 0;
+	prefs.sharp2d = read_int(L"Sharp2D", 1, 1) != 0;
 	prefs.filtering = read_int(L"Filtering", 1, 3);
 	prefs.anisotropy = read_int(L"Anisotropy", 3, 3);
 	prefs.aa = read_int(L"AntiAliasing", 0, 4);
@@ -627,3 +642,10 @@ extern "C" void graphics_ui_shutdown(void)
 }
 
 extern "C" int graphics_backend(void) { return prefs.backend; }
+
+extern "C" int graphics_sharp_2d(void) { return 0; /* dormant nearest experiment */ }
+
+extern "C" int graphics_snn_2d(void) { return 0; /* dormant SNN experiment */ }
+
+extern "C" int graphics_lanczos_2d(void) { return prefs.lanczos2d; }
+extern "C" float graphics_lanczos_ar(void) { return prefs.lanczos_ar / 100.0f; }

@@ -12,6 +12,7 @@ static const char *HLSL_VS =
 "  ndc.x = i.pos.x / surf.x * 2.0 - 1.0;\n"
 "  ndc.y = 1.0 - i.pos.y / surf.y * 2.0;            /* flip Y for D3D */\n"
 "  ndc *= layout; /* preserve 4:3 overlays inside a widescreen canvas */\n"
+"  if (layoutpad.x > 0 && layoutpad.y > 0) { float2 p = (ndc * float2(0.5,-0.5) + 0.5) * layoutpad; p = floor(p + 0.5); ndc = (p / layoutpad - 0.5) * float2(2,-2); }\n"
 "  /* The executor hands z in the title's DEVICE depth range (viewport z-scale\n"
 "   * c[58].z / offset c[59].z -> a 24-bit depth buffer, [0,0xFFFFFF]), not the\n"
 "   * [0,1] a pass-through VS assumed. Left raw, the 3D fighters/floor arrive at\n"
@@ -71,5 +72,77 @@ static const char *HLSL_PS_FLAT =
 "  return c;\n"
 "}\n";
 
+
+
+/* Radius-one symmetric nearest-neighbor mean, four opposite pairs. Compare in
+ * premultiplied RGBA so hidden RGB cannot bleed into visible cutouts. Preserve
+ * center alpha exactly: this optional denoiser must not reshape glyph coverage.
+ * The pass runs at SOURCE resolution, before nearest/original scaling. */
+static const char *HLSL_SNN =
+"Texture2D t:register(t0);\n"
+"float4 premul(float4 c){return float4(c.rgb*c.a,c.a);}\n"
+"float4 fetch(int2 p,int2 size){return premul(t.Load(int3(clamp(p,int2(0,0),size-1),0)));}\n"
+"float4 main(float4 position:SV_Position,float2 uv:TEXCOORD):SV_Target{\n"
+" uint w,h;t.GetDimensions(w,h);int2 size=int2(w,h);int2 p=int2(position.xy);\n"
+" float4 original=t.Load(int3(p,0));float4 center=premul(original),sum=center;\n"
+" const int2 offsets[4]={int2(1,0),int2(0,1),int2(1,1),int2(1,-1)};\n"
+" [unroll] for(int i=0;i<4;i++){float4 a=fetch(p+offsets[i],size),b=fetch(p-offsets[i],size);\n"
+" float4 da=a-center,db=b-center;sum+=dot(da,da)<=dot(db,db)?a:b;}\n"
+" return float4(original.a>0 && sum.a>0 ? sum.rgb/max(sum.a,0.000001) : 0,original.a);\n"
+"}\n";
+
+static const char *HLSL_PS_LANCZOS =
+"Texture2D t : register(t0);\n"
+"SamplerState s : register(s0);\n"
+"cbuffer C : register(b0){ float2 surf; float2 texsz; float aref; float showall; float diffscale; float afunc; float2 layout; float2 layoutpad; float lanczos_on; float ar_strength; float2 filterpad; };\n"
+"bool alpha_pass(float a,float r,float f){\n"
+"  return f==0x201 ? a<r : f==0x202 ? a==r : f==0x203 ? a<=r :\n"
+"         f==0x204 ? a>r : f==0x205 ? a!=r : f==0x206 ? a>=r : f==0x207;\n"
+"}\n"
+"struct VOut { float4 pos:SV_Position; float4 col:COLOR; float2 uv:TEXCOORD; };\n"
+"\n"
+"// Radial 16-tap Lanczos2, Hyllian/Jararaca 2011-2014, GPL-2.0-or-later.\n"
+"// Adapted from libretro/common-shaders/windowed/shaders/lanczos2-sharp.cg.\n"
+"// Original copyright: sergiogdb@gmail.com. See lanczos2-LICENSE.txt.\n"
+"float4 lanczos_sample(float2 uv){\n"
+" uint width,height;t.GetDimensions(width,height);float2 size=float2(width,height);\n"
+" float2 pc=uv*size, tc=floor(pc-0.5)+0.5;\n"
+" float4 total=0, lo=1, hi=0;float weight=0;\n"
+" [unroll] for(int y=-1;y<=2;y++) [unroll] for(int x=-1;x<=2;x++){\n"
+"  float2 delta=tc+float2(x,y)-pc;float radius=length(delta);\n"
+"  float w=radius<0.00001?4.9348022:sin(radius*1.57079632679)*sin(radius*3.14159265359)/(radius*radius);\n"
+"  float4 c=t.SampleLevel(s,(tc+float2(x,y))/size,0);\n"
+"  c.rgb*=c.a;total+=c*w;weight+=w;\n"
+"  if(x>=0 && x<=1 && y>=0 && y<=1){lo=min(lo,c);hi=max(hi,c);}\n"
+" }\n"
+" float4 color=total/weight;\n"
+" color=lerp(color,clamp(color,lo,hi),ar_strength);\n"
+" color.a=saturate(color.a);color.rgb=clamp(color.rgb,0,color.a);\n"
+" return float4(color.a>0.000001?color.rgb/color.a:0,color.a);\n"
+"}\n"
+"\n"
+"float4 main(VOut i):SV_Target{\n"
+"  float4 tx = lanczos_on>0.5 ? lanczos_sample(i.uv) : t.Sample(s, i.uv);\n"
+"  /* RECOMP_GPU_SHOWALL diag: full-bright texture, no diffuse modulate, no alpha\n"
+"   * discard -- shows exactly where geometry rasterises regardless of shading. */\n"
+"  if (showall > 0.5) return float4(tx.rgb, 1.0);\n"
+"  /* POC combiner stand-in. The real NV2A register combiners (and their final\n"
+"   * output scale of 1/2/2/4x) aren't passed to a back end. Two observed cases:\n"
+"   *  (1) 2D/UI draws use a BLACK vertex diffuse (0x000000) the combiner ignores\n"
+"   *      -- modulating by it would zero the image; treat pure black as white so\n"
+"   *      the texture passes through unchanged.\n"
+"   *  (2) 3D fighters carry a FLAT dark diffuse (~0x202020, no per-vertex light;\n"
+"   *      Nv2aVertex has no normal so no real lighting reaches us). Hardware\n"
+"   *      scales this up in the combiner, so a straight tex*0.125 wrongly crushes\n"
+"   *      them to black. Apply diffscale (approx the combiner output scale) so a\n"
+"   *      flat ~0x20 diffuse lifts the texture back toward full, while genuinely\n"
+"   *      colour-tinted diffuse still tints. Texture (SHOWALL-correct) dominates.\n"
+"   * Alpha stays texture.a * diffuse.a for correct blending. */\n"
+"  float m = max(i.col.r, max(i.col.g, i.col.b));\n"
+"  float3 d = (m <= 0.002) ? float3(1,1,1) : saturate(i.col.rgb * diffscale);\n"
+"  float4 c = float4(tx.rgb * d, tx.a * i.col.a);\n"
+"  if (aref >= 0.0 && !alpha_pass(c.a,aref,afunc)) discard;\n"
+"  return c;\n"
+"}\n";
 
 #endif

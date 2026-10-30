@@ -53,10 +53,13 @@ namespace
 	{
 		nri::Texture *object = nullptr;
         Texture* resolved = nullptr;
+        Texture* snn_filtered = nullptr;
+        uint64_t snn_revision = UINT64_MAX;
 		nri::Fence *present_ready = nullptr;
 		nri::Descriptor *view = nullptr;
 		nri::Descriptor *sample_view = nullptr;
 		unsigned mips = 1;
+        uint64_t revision = 0;
 		nri::AccessLayoutStage state = {};
 	};
 
@@ -97,9 +100,10 @@ namespace
 		float surf_w, surf_h, tex_w, tex_h;
 		float alpha_ref, showall, diffscale, alpha_func;
 		float layout_x, layout_y, layout_pad[2];
+        float lanczos_on, ar_strength, filter_pad[2];
 	};
 	
-	static_assert(sizeof(Constants) == 48);
+	static_assert(sizeof(Constants) == 64);
 	static_assert(sizeof(Nv2aVertex) == 28);
 
 	nri::GraphicsAPI active_api = nri::GraphicsAPI::D3D11;
@@ -111,17 +115,18 @@ namespace
 	nri::SwapChain *swapchain;
 	nri::Fence *fence;
 	nri::PipelineLayout *layout;
-	nri::Pipeline *present_pipeline, *fxaa_pipeline, *ssaa_pipeline;
+	nri::Pipeline *present_pipeline, *fxaa_pipeline, *ssaa_pipeline, *snn_pipeline;
     nri::PipelineLayout* smaa_layout = nullptr;
     nri::Pipeline* smaa_pipelines[3] = {};
     nri::Descriptor* smaa_point = nullptr;
     Texture smaa_edges, smaa_weights, smaa_area, smaa_search;
-	nri::Descriptor *samplers[8] = {}; // nearest, bilinear, trilinear, aniso 2/4/8/16, presentation
+	nri::Descriptor *samplers[26] = {}; // scene/presentation + guest min/mag/wrap variants for 2D
 	unsigned render_width = 640, render_height = 480, active_sampler = 1;
 	unsigned base_width = 640, base_height = 480, ssaa_samples = 4, scene_samples = 1;
     unsigned supported_msaa = 1, last_msaa_request = 0;
 	int active_aa;
 	nri::Pipeline *pipelines[4][2][3][2] = {}; // samples 1/2/4/8, textured, depth off/read/write, blend
+    nri::Pipeline* hud_pipelines[2][2] = {}; // no depth, output-resolution 2D
     nri::Pipeline* copy_pipelines[4] = {}; // seed retained color when changing sample count
 	
 	std::array<Frame, FrameCount> frames;
@@ -130,6 +135,21 @@ namespace
 	Texture scene, depth, movie, aa_image;
 	// Guest backbuffers and depth surfaces have independent memory identities.
 	std::map<uint32_t, Texture> color_targets, depth_targets;
+    struct HudDraw {
+        std::vector<Nv2aVertex> vertices;
+        Texture* image = nullptr; // owned by HudTail, not the mutable cache
+        Constants constants;
+        unsigned sampler = 0, blend = 0;
+        bool full_canvas = false;
+    };
+    struct HudTail {
+        Texture before; // scene just before its contiguous trailing 2D draws
+        std::vector<HudDraw> draws;
+        std::map<std::pair<nri::Texture*,uint64_t>,Texture> images;
+        uint64_t updated_frame = UINT64_MAX;
+    };
+    std::map<Texture*, HudTail> hud_tails;
+
 	Texture *active_color = &scene, *active_depth = &depth;
 	Texture *drawn_color = nullptr, *presented_color = nullptr;
 	uint64_t drawn_area = 0;
@@ -184,6 +204,7 @@ namespace
 	void destroy(Texture &texture)
 	{
 		if (texture.resolved) { destroy(*texture.resolved); delete texture.resolved; }
+        if (texture.snn_filtered) { destroy(*texture.snn_filtered); delete texture.snn_filtered; }
         core.DestroyDescriptor(texture.sample_view);
 		core.DestroyDescriptor(texture.view);
 		core.DestroyTexture(texture.object);
@@ -340,8 +361,11 @@ namespace
 		rendering = true;
 	}
 
+	void invalidate_hud(Texture* target);
+
 	void clear(unsigned flags, uint32_t argb, uint32_t zs)
 	{
+		if (flags & 0xF0) invalidate_hud(active_color);
 		begin_rendering();
 		nri::ClearAttachmentDesc clears[2] = {};
 		unsigned count = 0;
@@ -432,6 +456,7 @@ namespace
 
 	void upload_texture(Texture &image, const void *pixels, unsigned w, unsigned h, unsigned mip = 0, unsigned bytes_per_pixel = 4)
 	{
+        ++image.revision;
 		end_rendering();
 		
 		const auto &limits = core.GetDeviceDesc(*device).memoryAlignment;
@@ -667,16 +692,25 @@ namespace
 		constants.size = sizeof(Constants);
 		constants.shaderStages = nri::StageBits::VERTEX_SHADER | nri::StageBits::FRAGMENT_SHADER;
 
-		for (unsigned i = 0; i < 8; ++i)
+		for (unsigned i = 0; i < 26; ++i)
 		{
 			nri::SamplerDesc sampler = {};
 			sampler.filters.min = sampler.filters.mag = i == 0 ? nri::Filter::NEAREST : nri::Filter::LINEAR;
+			if (i == 8) sampler.filters.min = nri::Filter::NEAREST;
+            if (i == 9) sampler.filters.mag = nri::Filter::NEAREST;
 			sampler.filters.mip = i >= 2 && i <= 6 ? nri::Filter::LINEAR : nri::Filter::NEAREST;
 			sampler.mipMax = i >= 2 && i <= 6 ? 1000.0f : 0.0f;
 			sampler.anisotropy = i >= 3 && i <= 6 ? (uint8_t)(2u << (i - 3)) : 1;
 			
 			auto address = i == 7 ? nri::AddressMode::CLAMP_TO_EDGE : nri::AddressMode::REPEAT;
 			sampler.addressModes = {address, address, address};
+            if (i >= 10) {
+                unsigned mode=(i-10)%4, wrap=(i-10)/4;
+                sampler.filters.min = mode==1 || mode==3 ? nri::Filter::LINEAR : nri::Filter::NEAREST;
+                sampler.filters.mag = mode==1 || mode==2 ? nri::Filter::LINEAR : nri::Filter::NEAREST;
+                sampler.addressModes.u=wrap&1 ? nri::AddressMode::CLAMP_TO_EDGE : nri::AddressMode::REPEAT;
+                sampler.addressModes.v=wrap&2 ? nri::AddressMode::CLAMP_TO_EDGE : nri::AddressMode::REPEAT;
+            }
 			check(core.CreateSampler(*device, sampler, samplers[i]), "Create texture sampler");
 		}
 		nri::PipelineLayoutDesc ld = {};
@@ -691,7 +725,7 @@ namespace
 		check(core.CreatePipelineLayout(*device, ld, layout), "Create pipeline layout");
 
 		auto vs = doa1u::compile_shader(active_api, HLSL_VS, "vs_5_0");
-		auto tex = doa1u::compile_shader(active_api, HLSL_PS_TEX, "ps_5_0");
+		auto tex = doa1u::compile_shader(active_api, HLSL_PS_LANCZOS, "ps_5_0");
 		auto flat = doa1u::compile_shader(active_api, HLSL_PS_FLAT, "ps_5_0");
 		
 		nri::VertexAttributeDesc attributes[3] = {};
@@ -757,6 +791,10 @@ namespace
 					pd.shaderNum = 2;
 					
 					check(core.CreateGraphicsPipeline(*device, pd, pipelines[samples == 8 ? 3 : samples == 4 ? 2 : samples == 2 ? 1 : 0][textured][z][blend]), "Create graphics pipeline");
+                    if (samples == 1 && z == 0) {
+                        pd.outputMerger.depthStencilFormat = nri::Format::UNKNOWN;
+                        check(core.CreateGraphicsPipeline(*device,pd,hud_pipelines[textured][blend]), "Create 2D pipeline");
+                    }
 				}
         }
 		// Full-screen triangle; no guest diffuse, alpha test or depth behavior.
@@ -795,6 +833,12 @@ namespace
             check(core.CreateGraphicsPipeline(*device,pd,copy_pipelines[samples==8?3:samples==4?2:1]),"Create multisample preservation pipeline");
         }
         pd.multisample=nullptr;
+        auto snn=doa1u::compile_shader(active_api,HLSL_SNN,"ps_5_0");
+        shaders[1]={nri::StageBits::FRAGMENT_SHADER,snn.data(),snn.size(),"main"};
+        color.format=nri::Format::BGRA8_UNORM;
+        check(core.CreateGraphicsPipeline(*device,pd,snn_pipeline),"Create source SNN pipeline");
+        color.format=color_format;
+
 
 		auto fxaa = doa1u::compile_shader(active_api, HLSL_FXAA, "ps_5_0"), ssaa = doa1u::compile_shader(active_api, HLSL_SSAA, "ps_5_0");
 		shaders[1] = {nri::StageBits::FRAGMENT_SHADER, fxaa.data(), fxaa.size(), "main"};
@@ -905,7 +949,7 @@ namespace
 			core.CmdSetRootConstants(*frame->commands, root);
 		}
 		
-		bind_image(source.sample_view, 7);
+		bind_image(source.sample_view ? source.sample_view : source.view, 7);
 		nri::Viewport viewport = {0, 0, (float)w, (float)h, 0, 1};
 		
 		if (fit)
@@ -932,6 +976,22 @@ namespace
 		core.CmdDraw(*frame->commands, triangle);
 		core.CmdEndRendering(*frame->commands);
 	}
+
+    Texture& snn_image(Texture& source) {
+        if (!source.snn_filtered) source.snn_filtered=new Texture;
+        if (source.snn_filtered->object && source.snn_revision==source.revision) return *source.snn_filtered;
+        retire(*source.snn_filtered);
+        const auto& desc=core.GetTextureDesc(*source.object);
+        auto& target=*source.snn_filtered;
+        make_texture(target,desc.width,desc.height,nri::Format::BGRA8_UNORM,
+            nri::TextureUsageBits::COLOR_ATTACHMENT|nri::TextureUsageBits::SHADER_RESOURCE,nri::TextureView::COLOR_ATTACHMENT);
+        nri::TextureViewDesc view={};view.texture=target.object;view.type=nri::TextureView::TEXTURE;
+        view.mipNum=view.layerNum=view.sliceNum=1;
+        check(core.CreateTextureView(view,target.sample_view),"Create SNN sampling view");
+        scale_image(source,target,desc.width,desc.height,false,snn_pipeline);
+        source.snn_revision=source.revision;
+        return target;
+    }
 
     void smaa_image(Texture& source, Texture& target) {
         end_rendering();
@@ -1009,6 +1069,141 @@ namespace
             scene_samples = saved_samples;
         }
 	}
+
+
+    void invalidate_hud(Texture* target) {
+        auto it = hud_tails.find(target);
+        if (it == hud_tails.end()) return;
+        retire(it->second.before);
+        for (auto& image : it->second.images) retire(image.second);
+        hud_tails.erase(it);
+    }
+
+    // Copy, not cache references: palette/texture mutations and cache eviction
+    // after this draw must not alter later presentation or a retained pause.
+    void snapshot_image(Texture& source, Texture& target, bool attachment) {
+        end_rendering();
+        Texture& input = resolve_image(source);
+        const auto& desc = core.GetTextureDesc(*input.object);
+        make_texture(target,desc.width,desc.height,desc.format,
+            nri::TextureUsageBits::SHADER_RESOURCE | (attachment ? nri::TextureUsageBits::COLOR_ATTACHMENT : nri::TextureUsageBits::NONE),
+            attachment ? nri::TextureView::COLOR_ATTACHMENT : nri::TextureView::TEXTURE);
+        if (attachment) {
+            nri::TextureViewDesc view = {}; view.texture=target.object; view.type=nri::TextureView::TEXTURE;
+            view.mipNum=view.layerNum=view.sliceNum=1;
+            check(core.CreateTextureView(view,target.sample_view),"Create 2D scene snapshot view");
+        }
+        transition(input,nri::AccessBits::COPY_SOURCE,nri::Layout::COPY_SOURCE,nri::StageBits::COPY);
+        transition(target,nri::AccessBits::COPY_DESTINATION,nri::Layout::COPY_DESTINATION,nri::StageBits::COPY);
+        nri::TextureRegionDesc region = {}; region.width=desc.width; region.height=desc.height; region.depth=1;
+        core.CmdCopyTexture(*frame->commands,*target.object,&region,*input.object,&region);
+    }
+
+    bool has_2d_coordinates(const Nv2aBatch& batch) {
+        if (batch.vertex_domain == NV2A_VERTEX_DOMAIN_SCREEN) return true;
+        if (batch.vertex_domain == NV2A_VERTEX_DOMAIN_WORLD) return false;
+        return batch.screen_space != 0; // older/unclassified command paths
+    }
+
+    bool is_2d(const Nv2aBatch& batch) {
+        // Explicit XYZRHW/FVF wins over executor transform implementation.
+        // Depth/stencil effects and marked stage backgrounds remain ordered.
+        return has_2d_coordinates(batch) && batch.presentation != NV2A_PRESENTATION_BACKGROUND &&
+            !guest_depth_mode(batch.state) && (!batch.state || !batch.state->stencil_enable);
+    }
+
+    unsigned sampler_2d(const Nv2aTexture* texture, bool sharp = graphics_sharp_2d() != 0) {
+        if (!texture) return 10;
+        unsigned address=(texture->addr_u==3?1:0)|(texture->addr_v==3?2:0);
+        if (sharp) return 10+address*4;
+        unsigned min = (texture->filter >> 16) & 255, mag = (texture->filter >> 24) & 15;
+        bool linear_min = min == 2 || min == 4 || min == 6, linear_mag = mag == 2;
+        return 10+address*4+(linear_min ? (linear_mag ? 1 : 3) : (linear_mag ? 2 : 0));
+    }
+
+    // Only the trailing, depth-independent 2D run can be moved after scene AA.
+    // Any later world draw invalidates this run: no background, fade or effect
+    // is hoisted across another draw. Original draws still populate guest color.
+    void remember_hud(const Nv2aBatch& batch, Texture* image, const Constants& constants, unsigned blend) {
+        auto previous=hud_tails.find(active_color);
+        if (previous!=hud_tails.end() && previous->second.updated_frame!=frame_number) invalidate_hud(active_color);
+        auto& tail = hud_tails[active_color];
+        tail.updated_frame=frame_number;
+        if (!tail.before.object) snapshot_image(*active_color,tail.before,true);
+        HudDraw draw;
+        draw.vertices.assign(batch.vertices,batch.vertices+batch.count);
+        draw.constants=constants; draw.sampler=sampler_2d(batch.texture,false); draw.blend=blend;
+        if (!image) {
+            float left=constants.surf_w, top=constants.surf_h, right=0, bottom=0;
+            for (const auto& vertex:draw.vertices) {
+                left=std::min(left,vertex.x); top=std::min(top,vertex.y);
+                right=std::max(right,vertex.x); bottom=std::max(bottom,vertex.y);
+            }
+            draw.full_canvas=left<=0 && top<=0 && right>=constants.surf_w && bottom>=constants.surf_h;
+        }
+        if (image) {
+            auto& copy=tail.images[{image->object,image->revision}];
+            if (!copy.object) snapshot_image(*image,copy,false);
+            draw.image=&copy;
+        }
+        tail.draws.push_back(std::move(draw));
+    }
+
+    nri::Viewport hud_viewport(unsigned w, unsigned h) {
+        const float aspect = graphics_widescreen() ? 16.0f/9.0f : 4.0f/3.0f;
+        // The checkbox changes sampling, not composition size. Share the same
+        // aspect-fitted canvas and pixel alignment in both states.
+        float vh=std::min((float)h,w/aspect), vw=vh*aspect;
+        return {(w-vw)*0.5f,(h-vh)*0.5f,vw,vh,0,1};
+    }
+
+    void render_hud(HudTail& tail, Texture& target, unsigned w, unsigned h) {
+        end_rendering();
+        transition(target,nri::AccessBits::COLOR_ATTACHMENT,nri::Layout::COLOR_ATTACHMENT,nri::StageBits::COLOR_ATTACHMENT);
+        // Texture transitions must precede the rendering scope.
+        for (auto& image : tail.images) {
+            Texture& sampled=graphics_snn_2d()?snn_image(image.second):image.second;
+            transition(sampled,nri::AccessBits::SHADER_RESOURCE,nri::Layout::SHADER_RESOURCE,nri::StageBits::FRAGMENT_SHADER);
+        }
+        nri::AttachmentDesc color={}; color.descriptor=target.view;
+        nri::RenderingDesc desc={}; desc.colors=&color; desc.colorNum=1;
+        core.CmdBeginRendering(*frame->commands,desc);
+        auto viewport=hud_viewport(w,h);
+        core.CmdSetViewports(*frame->commands,&viewport,1);
+        nri::Rect scissor={0,0,(nri::Dim_t)w,(nri::Dim_t)h};
+        core.CmdSetScissors(*frame->commands,&scissor,1);
+        core.CmdSetPipelineLayout(*frame->commands,nri::BindPoint::GRAPHICS,*layout);
+        for (auto& draw : tail.draws) {
+            Constants constants=draw.constants;
+            constants.lanczos_on=graphics_lanczos_2d();
+            constants.ar_strength=graphics_lanczos_ar();
+            auto draw_viewport=viewport;
+            if (draw.full_canvas) {
+                // Fades/solid full-screen clears must also cover the world
+                // outside the HUD, not leave bright side bands.
+                float aspect=graphics_widescreen()?16.0f/9.0f:4.0f/3.0f;
+                float vh=std::min((float)h,w/aspect), vw=vh*aspect;
+                draw_viewport={(w-vw)*0.5f,(h-vh)*0.5f,vw,vh,0,1};
+            }
+            core.CmdSetViewports(*frame->commands,&draw_viewport,1);
+            constants.layout_pad[0]=draw_viewport.width;
+            constants.layout_pad[1]=draw_viewport.height;
+            core.CmdSetPipeline(*frame->commands,*hud_pipelines[draw.image?1:0][draw.blend]);
+            nri::SetRootConstantsDesc root={}; root.data=&constants; root.size=sizeof(constants);
+            core.CmdSetRootConstants(*frame->commands,root);
+            if (draw.image) {
+                unsigned sampler=(graphics_lanczos_2d() || graphics_sharp_2d())?10+((draw.sampler-10)/4)*4:draw.sampler;
+                Texture& sampled=graphics_snn_2d()?*draw.image->snn_filtered:*draw.image;
+                bind_image(sampled.sample_view?sampled.sample_view:sampled.view,sampler);
+            }
+            Upload vertices=upload(frame->vertices,draw.vertices.data(),draw.vertices.size()*sizeof(Nv2aVertex),4,nri::BufferUsageBits::VERTEX);
+            nri::VertexBufferDesc vb={vertices.buffer,vertices.offset,sizeof(Nv2aVertex)};
+            core.CmdSetVertexBuffers(*frame->commands,0,&vb,1);
+            nri::DrawDesc command={(uint32_t)draw.vertices.size(),1,0,0};
+            core.CmdDraw(*frame->commands,command);
+        }
+        core.CmdEndRendering(*frame->commands);
+    }
 
 	void create_scene(nri::Format format)
 	{
@@ -1117,7 +1312,13 @@ namespace
 			for (auto &entry : textures)
 				destroy(entry.image);
 			
-			destroy(smaa_edges); destroy(smaa_weights); destroy(smaa_area); destroy(smaa_search);
+			for (auto& entry : hud_tails) {
+                destroy(entry.second.before);
+                for (auto& image : entry.second.images) destroy(image.second);
+            }
+            hud_tails.clear();
+            for (auto& by_texture : hud_pipelines) for (auto* p : by_texture) core.DestroyPipeline(p);
+            destroy(smaa_edges); destroy(smaa_weights); destroy(smaa_area); destroy(smaa_search);
             destroy(aa_image);
 			destroy(movie);
 			destroy(scene);
@@ -1161,6 +1362,7 @@ namespace
 			for (unsigned i=1;i<4;++i) core.DestroyPipeline(copy_pipelines[i]);
             core.DestroyPipeline(present_pipeline);
 			core.DestroyPipeline(fxaa_pipeline);
+            core.DestroyPipeline(snn_pipeline);
 			core.DestroyPipeline(ssaa_pipeline);
             for (auto* p : smaa_pipelines) core.DestroyPipeline(p);
             core.DestroyPipelineLayout(smaa_layout);
@@ -1367,6 +1569,17 @@ namespace
             scene_samples = selected_samples;
 			render_width = rw;
 			render_height = rh;
+            for (auto& entry : hud_tails) {
+                auto& before=entry.second.before;
+                if (!before.object) continue;
+                Texture old=before; before={};
+                unsigned saved_samples=scene_samples; scene_samples=1;
+                create_color_target(before,core.GetTextureDesc(*old.object).format);
+                scene_samples=saved_samples;
+                scale_image(old,before,rw,rh,false);
+                retire(old);
+            }
+
 			create_scene(core.GetTextureDesc(*previous.object).format);
 			
 			// Preserve the paused scene; never replace it with a black frame.
@@ -1438,7 +1651,7 @@ namespace
 				constants.layout_x = 1;
 				constants.layout_y = 4.0f / 3.0f;
 			}
-			else if (!movie_image && batch->presentation == NV2A_PRESENTATION_WORLD && !batch->screen_space)
+			else if (!movie_image && batch->presentation == NV2A_PRESENTATION_WORLD && !has_2d_coordinates(*batch))
 				constants.layout_x = 1;
 		}
 		
@@ -1448,9 +1661,17 @@ namespace
 			z = 0;
 		
 		unsigned blend = rs && rs->blend_enable ? 1 : 0;
+        bool artwork = !movie_image && has_2d_coordinates(*batch) && !guest_depth_mode(rs) && (!rs || !rs->stencil_enable);
+        if (is_2d(*batch) && !movie_image) remember_hud(*batch,image,constants,blend);
+        else invalidate_hud(active_color);
+        constants.lanczos_on=artwork && graphics_lanczos_2d();
+        constants.ar_strength=graphics_lanczos_ar();
+        if (artwork && image && graphics_snn_2d()) image=&snn_image(*image);
+
 		Upload vertices =
 		    upload(frame->vertices, batch->vertices, (uint64_t)batch->count * sizeof(Nv2aVertex), 4, nri::BufferUsageBits::VERTEX);
 			
+		if (image) transition(*image,nri::AccessBits::SHADER_RESOURCE,nri::Layout::SHADER_RESOURCE,nri::StageBits::FRAGMENT_SHADER);
 		begin_rendering();
 		core.CmdSetPipelineLayout(*frame->commands, nri::BindPoint::GRAPHICS, *layout);
 		core.CmdSetPipeline(*frame->commands, *pipelines[sample_index(scene_samples)][image ? 1 : 0][z][blend]);
@@ -1461,7 +1682,7 @@ namespace
 		core.CmdSetRootConstants(*frame->commands, root);
 		
 		if (image)
-			bind_image(image->view, movie_image ? 1 : active_sampler);
+			bind_image(image->sample_view?image->sample_view:image->view, movie_image ? 1 : artwork ? sampler_2d(batch->texture,graphics_lanczos_2d() || graphics_sharp_2d()) : active_sampler);
 
 		nri::VertexBufferDesc vb = {vertices.buffer, vertices.offset, sizeof(Nv2aVertex)};
 		core.CmdSetVertexBuffers(*frame->commands, 0, &vb, 1);
@@ -1681,7 +1902,9 @@ namespace
         check(acquired, "Acquire swapchain image");
 		
 		Texture &output = outputs.at(index);
-		Texture *image = &resolve_image(*active_color);
+		auto tail_it=hud_tails.find(active_color);
+        HudTail* tail=tail_it!=hud_tails.end() && !tail_it->second.draws.empty() ? &tail_it->second : nullptr;
+        Texture *image = tail ? &tail->before : &resolve_image(*active_color);
 		if (active_aa == 1 || active_aa == 3 || active_aa == 4) {
 			if (aa_image.object) {
 				const auto &desc = core.GetTextureDesc(*aa_image.object);
@@ -1707,6 +1930,7 @@ namespace
 			image = &aa_image;
 		}
 		scale_image(*image, output, width, height, true);
+        if (tail) render_hud(*tail,output,width,height);
 
         // Overlay commands use the same NRI queue on every API, after AA and
         // scene presentation. They never modify persistent guest targets.

@@ -13,7 +13,7 @@ RTLS uint32_t g_eax,g_ecx,g_edx,g_esp,g_ebx,g_esi,g_edi,g_ebp,g_fs_base,g_seh_eb
 ptrdiff_t g_xbox_mem_offset;
 static uint8_t memory[0x400000];
 static int wide;
-static unsigned marker[16], markers;
+static unsigned marker[16], marker_method[16], markers;
 static float seen_aspect, seen_slope, seen_radius;
 static uint32_t seen_fov,seen_near,seen_far;
 extern void widescreen_camera_begin(void), widescreen_camera_end(void);
@@ -31,9 +31,11 @@ void gd_guest_call(uint32_t fn, int nargs, const uint32_t *args, uint32_t ret)
 {
     (void)args; (void)ret;
     require(fn==0x160D00 && nargs==0,"marker uses original ring-space-aware writer");
-    require(g_ecx==((1u<<18)|(7u<<13)|NV2A_PRESENTATION_METHOD),"marker packet header");
-    require((g_edx&0xFFFF0000)==NV2A_PRESENTATION_COOKIE,"marker cookie");
-    require(markers<16,"bounded marker log"); marker[markers++]=g_edx&0xFFFF;
+    unsigned method=g_ecx&0x1FFF;
+    require(g_ecx==((1u<<18)|(7u<<13)|method),"marker packet header");
+    require((method==NV2A_PRESENTATION_METHOD && (g_edx&0xFFFF0000)==NV2A_PRESENTATION_COOKIE) ||
+            (method==NV2A_VERTEX_DOMAIN_METHOD && (g_edx&0xFFFF0000)==NV2A_VERTEX_DOMAIN_COOKIE),"marker cookie/domain");
+    require(markers<16,"bounded marker log"); marker_method[markers]=method; marker[markers++]=g_edx&0xFFFF;
     /* Host helper must preserve caller state even if a space-making path clobbers it. */
     g_eax=91; g_ecx=92; g_edx=93; g_ebx=94; g_esi=95; g_edi=96;
     g_ebp=97; g_esp=98; g_seh_ebp=99;
@@ -51,6 +53,13 @@ void sub_00063420_gen(void)
     g_eax=17; g_esp+=4;
 }
 void sub_0005C850_gen(void) { g_eax=42; g_esp+=4; }
+void sub_00167BD0_gen(void) {
+    require(g_eax==11 && g_ecx==12 && g_edx==13 && g_ebx==14 && g_esi==15 && g_edi==16 &&
+            g_ebp==17 && g_esp==0x20000 && g_seh_ebp==18,"FVF marker preserves input ABI");
+    g_eax=0x1234; g_esp+=8;
+}
+void sub_00167870_gen(void) { g_eax=0x5678; g_esp+=12; }
+extern void sub_00167BD0(void), sub_00167870(void);
 
 static void projection_call(void)
 {
@@ -94,6 +103,17 @@ int main(void)
     require(markers==before+2 && marker[before]==NV2A_PRESENTATION_BACKGROUND
             && marker[before+1]==NV2A_PRESENTATION_WORLD,"backdrop markers ordered and scoped");
     require(g_eax==42 && g_esp==0x20004,"backdrop return survives marker insertion");
-    puts("Widescreen shadow ABI, original 4:3 path, projection, culling and marker checks passed.");
+    const unsigned handles[]={0x104,0x144,0x44,0x112,0x180001};
+    const unsigned expected[]={NV2A_VERTEX_DOMAIN_SCREEN,NV2A_VERTEX_DOMAIN_SCREEN,NV2A_VERTEX_DOMAIN_SCREEN,NV2A_VERTEX_DOMAIN_WORLD,NV2A_VERTEX_DOMAIN_UNKNOWN};
+    for (unsigned i=0;i<5;++i) {
+        g_eax=11; g_ecx=12; g_edx=13; g_ebx=14; g_esi=15; g_edi=16; g_ebp=17; g_esp=0x20000; g_seh_ebp=18;
+        GMEM32(g_esp+4)=handles[i]; before=markers; sub_00167BD0();
+        require(marker_method[before]==NV2A_VERTEX_DOMAIN_METHOD && marker[before]==expected[i],"FVF semantic domain in command order");
+        require(g_eax==0x1234 && g_esp==0x20008 && GMEM32(0x20004)==handles[i],"FVF original argument/return preserved");
+    }
+    before=markers; g_esp=0x20000; sub_00167870();
+    require(marker_method[before]==NV2A_VERTEX_DOMAIN_METHOD && marker[before]==NV2A_VERTEX_DOMAIN_UNKNOWN,"direct shader selection clears stale FVF domain");
+    require(g_eax==0x5678 && g_esp==0x2000C,"direct shader return ABI preserved");
+    puts("Widescreen/FVF shadow ABI, ordered domains, original 4:3 path, projection, culling and marker checks passed.");
     return 0;
 }

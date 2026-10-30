@@ -186,3 +186,114 @@ stair-step diagonal, distant flat-region preservation, exact 2x/4x sample
 averages and non-power-of-two dimensions. Shader compilation and existing
 color-target/depth/alpha regressions also pass. In-game appearance/performance
 and live mode switching still need user validation; no game automation is used.
+
+
+## Independent sharp 2D presentation (2026-10-30)
+
+F1 > Texture filtering separates **3D texture filter** from **Sharp 2D textures**.
+Sharp 2D defaults on; Save configuration persists `Sharp2D=1`/`0` without changing
+existing setting IDs. This supersedes the older global-filter description.
+
+- Unchecked: 2D respects guest nearest/linear min/mag requests, independently of
+  the 3D dropdown. Checked: nearest, with guest repeat/clamp axes preserved.
+- A trailing depth/stencil-independent pretransformed HUD/menu run is composed
+  at output resolution after scene AA/scaling and before native F1 UI.
+- Sharp artwork uses centered integer multiples of the original 480-line canvas.
+  Existing 4:3/non-square-Xbox-pixel and widescreen rules remain intact. Extra
+  margins are intentional. Below-original outputs fit proportionally to avoid
+  clipping. Vertex boundaries snap to pixels. This is integer canvas sizing,
+  not a promise that every source texel is square.
+- Full-canvas flat overlays/fades retain the scene-fit viewport to also cover
+  the area outside the smaller integer-sized HUD.
+- No arbitrary reordering: subsequent world/depth/stencil/background draws
+  invalidate the deferred run. Earlier/interleaved 2D stays in the scene and may
+  still receive scene AA/scaling. Stage backgrounds never move over fighters;
+  their depth-independent texture sampling is still separate.
+- Guest targets receive all original draws in order. Per-target pre-HUD color,
+  CPU draw/state and immutable GPU texture snapshots preserve pause. Texture
+  copies are deduplicated per revision; palette changes/cache eviction cannot
+  alter replayed artwork. Resize/AA changes preserve pre-HUD color. Superseded
+  GPU resources retire behind existing fences.
+- Movies stay bilinear; native F1 UI is unchanged. The checkbox is disabled on
+  legacy D3D11; NRI D3D11/D3D12/Vulkan share the new path.
+
+Synthetic checks are not gameplay verification. Inspect character-select/menu
+artwork, HUD and fades in both aspects, on/off, with different AA methods;
+check Save/restart and pause/resize. No sharpening kernel or replacement assets.
+
+
+### FVF-aware HUD fix (2026-10-30)
+
+Training screenshots showed COM TYPE/STAND responding to the 3D filter, with no
+visible checkbox effect. The initial transform-path heuristic was insufficient.
+The original sprite/HUD setup `0x9C5F0` selects XYZRHW FVF `0x144` and disables Z;
+quad helpers `0x5EAB0`/`0x5EFD0` use `0x104`, and flat overlays use `0x44`.
+These semantics do not depend on whether XDK uses a passthrough vertex program.
+
+SetVertexShader (`0x167BD0`) now emits a private ordered vertex-domain packet
+through the existing ring writer, preserving the guest ABI. The executor stamps
+it onto batches independently of the legacy transform-path hint. Explicit
+XYZRHW wins for filtering/layout/classification; explicit world FVF cannot be
+misclassified from a screen-space hint. Arbitrary shader handles are unknown;
+direct SelectVertexShader (`0x167870`) clears stale FVF metadata. Domain is GPU
+state and persists across flips until selection changes; background layout
+markers remain separate. Generation reapply rules preserve both shadows.
+
+Eligible trailing HUD now uses the output-resolution composition pass in BOTH
+checkbox states. Off retains original min/mag sampling and proportional layout;
+on applies nearest, integer canvas sizing and pixel snapping. Retained pause
+snapshots respond to the checkbox without requiring guest redraw. This replaces
+the earlier checked-only composition behavior. Earlier/depth-dependent/interleaved
+draws retain original ordering and are not blindly moved into the HUD tail.
+
+Regression coverage includes XYZRHW domain with the old screen hint false,
+3D-filter variation, original/sharp toggles on retained snapshots, post-AA pixel
+readback, 16:9 layout, ABI-preserving marker emission and direct shader reset.
+User retest of the actual training HUD is still required; no live game run by agent.
+
+
+### Same-size sharp toggle (2026-10-30, supersedes integer sizing above)
+
+User confirmed the sharp effect works, but requested identical composition sizes
+in both states. Removed integer-canvas size quantization. Both states now share
+the same aspect-fitted viewport and pixel-aligned geometry; only texture sampling
+changes (original versus nearest). No checkbox-induced shrinking or extra margins.
+Post-AA/output-resolution composition and FVF classification are unchanged.
+Native/NRI-validated sharp-HUD pixels and presentation/resize/pause checks pass on
+D3D11/D3D12/Vulkan, including identical on/off viewport bounds in 4:3 and 16:9.
+Actual same-size update awaits user testing.
+
+### Optional SNN smoothing (2026-10-30)
+
+NRI exposes independent SNN smoothing (2D) (default off, saved as SNN2D) and
+Sharp 2D textures (nearest) checkboxes. Both off retains original sampling;
+SNN only smooths then uses original sampling; nearest only retains the sharp
+path; both applies SNN at source resolution FIRST, then nearest scaling.
+All combinations share identical layout/composition size. Movies/native UI
+are unaffected.
+
+The preview uses a gentle fixed radius-one symmetric-nearest-neighbor mean:
+choose the closest color from each of four opposite neighbor pairs, then average
+with the center. Comparisons/averaging use premultiplied RGBA; original center
+alpha is preserved. This is not a bit-exact reproduction of GIMP's filter or
+its default radius. Filtered GPU images are cached by texture revision; raw
+HUD snapshots remain available for non-destructive paused toggles.
+
+### Lanczos2 preview replaces active SNN/nearest controls (2026-10-30)
+
+Single checkbox: 2D filtering (Lanczos2 + anti-ringing), default on. SNN and
+nearest implementations/settings remain dormant in source; old INI choices do
+not enable them. Unchecked retains original sampling. Same layout and size.
+HLSL adaptation of Hyllian/Jararaca's libretro lanczos2-sharp.cg: 16 radial taps,
+window sinc 0.5, sinc 1.0, central 2x2 anti-ringing bounds. Transparent artwork
+uses premultiplied RGBA, normalized/clamped alpha, then straight-alpha blending.
+Applied per 2D draw during scaling, including output-resolution HUD replay;
+not a source-resolution blur or a whole-scene postfilter. Movies remain bilinear.
+
+Anti-ringing strength slider: 0-100%, default 80% (= upstream 0.8). Changes live
+without rebuilding shaders or restarting; Save configuration persists it as
+LANCZOS2_AR_STRENGTH integer percent, plus Lanczos2D checkbox. Lower values permit
+more ringing; higher values constrain overshoot. Shader attribution/license
+notice in src/render/common/lanczos2-LICENSE.txt.
+Focused DXBC/SPIR-V compilation and hidden presentation/resize/toggle smoke
+checks on D3D11/D3D12/Vulkan; no broad regression rerun during visual tuning.

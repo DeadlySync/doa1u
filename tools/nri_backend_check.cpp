@@ -7,6 +7,9 @@
 #include <d3d12.h>
 #include <d3d12sdklayers.h>
 
+static bool test_sharp2d = true, test_snn2d = false;
+static int test_wide = 0;
+static uint32_t test_texture_alpha = 255;
 static unsigned test_msaa_requested = 4;
 extern "C" {
 void xbox_InputKeySet(int, int) {}
@@ -21,17 +24,23 @@ void nv2a_backend_register(const Nv2aBackend*) {}
 int nv2a_backend_decode_texture(const Nv2aTexture* t, uint32_t* pixels) {
     for (unsigned y=0; y<t->height; ++y)
         for (unsigned x=0; x<t->width; ++x)
-            pixels[y*t->width+x] = x % 2 ? 0xFFFFFFFF : 0xFF000000;
+            pixels[y*t->width+x] = (test_texture_alpha<<24) | (x % 2 ? 0xFFFFFF : 0);
     return 1;
 }
 int nv2a_backend_p8_source(const Nv2aTexture*, const uint8_t**, const uint8_t**) { return 0; }
-int graphics_widescreen() { return 0; }
+int graphics_widescreen() { return test_wide; }
 int graphics_backend() { return 0; }
 void graphics_render_size(unsigned* w, unsigned* h) { *w = 64; *h = 48; }
 int graphics_aa_method() { return active_aa; }
 unsigned graphics_ssaa_samples() { return ssaa_samples; }
 unsigned graphics_msaa_samples() { return test_msaa_requested; }
 int graphics_texture_filter() { return 1; }
+int graphics_sharp_2d() { return test_sharp2d; }
+static bool test_lanczos = false;
+static float test_lanczos_ar = 0.8f;
+int graphics_lanczos_2d() { return test_lanczos; }
+float graphics_lanczos_ar() { return test_lanczos_ar; }
+int graphics_snn_2d() { return test_snn2d; }
 unsigned graphics_anisotropy() { return 2; }
 void graphics_window_apply(void*) {}
 void graphics_ui_renderer_name(const char*) {}
@@ -94,7 +103,7 @@ void check_api_messages() {
 int main(int argc, char** argv) {
     SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
     try {
-        if (argc < 2 || argc > 3) throw std::runtime_error("Usage: nri_backend_check d3d11|d3d12|vulkan [--present|--filter|--smaa|--msaa]");
+        if (argc < 2 || argc > 3) throw std::runtime_error("Usage: nri_backend_check d3d11|d3d12|vulkan [--present|--filter|--smaa|--msaa|--sharp2d|--snn]");
         active_api = !std::strcmp(argv[1], "d3d11") ? nri::GraphicsAPI::D3D11 :
             !std::strcmp(argv[1], "d3d12") ? nri::GraphicsAPI::D3D12 : nri::GraphicsAPI::VK;
         QueryPerformanceFrequency(&timing_frequency);
@@ -166,7 +175,18 @@ int main(int argc, char** argv) {
                 Nv2aVertex verts[3] = {{0,0,0,1,0xFF20A0E0,0,0}, {64,0,0,1,0xFF20A0E0,0,0}, {0,48,0,1,0xFF20A0E0,0,0}};
                 Nv2aSurface surface = {}; surface.width = 64; surface.height = 48;
                 Nv2aBatch batch = {}; batch.vertices = verts; batch.count = 3;
-                if (i != 3) draw(&surface, &batch); // Pause/retained-scene presentation.
+                test_sharp2d = i != 10;
+                test_lanczos = (i % 2) != 0;
+                test_lanczos_ar = (i % 3) * 0.5f;
+                test_snn2d = (i/2)%2 != 0;
+                if (i != 3 && i != 5) {
+                    draw(&surface, &batch);
+                    Nv2aTexture tex={}; tex.width=tex.height=64; tex.filter=2u<<24|2u<<16;
+                    batch.screen_space=0; batch.vertex_domain=NV2A_VERTEX_DOMAIN_SCREEN; batch.texture=&tex;
+                    for (auto& v:verts) { v.u=v.x/4; v.v=v.y/4; v.diffuse=0x80FFFFFF; }
+                    draw(&surface,&batch);
+                } // Pause includes a resolution/AA change with retained 2D.
+
                 flip();
             }
             check_api_messages();
@@ -187,12 +207,17 @@ int main(int argc, char** argv) {
         check(core.CreateCommittedBuffer(*device, nri::MemoryLocation::HOST_READBACK, 0, bd, readback), "Create readback");
         bool msaa_check = argc == 3 && !std::strcmp(argv[2], "--msaa");
         bool smaa_check = argc == 3 && !std::strcmp(argv[2], "--smaa");
+        bool snn_check = argc == 3 && !std::strcmp(argv[2], "--snn");
+        bool sharp_check = snn_check || (argc == 3 && !std::strcmp(argv[2], "--sharp2d"));
         bool filtering_check = argc == 3 && !std::strcmp(argv[2], "--filter");
         double contrast[8] = {};
-        for (unsigned iteration = 0; iteration < (filtering_check ? 8u : 12u); ++iteration) {
+        if (snn_check) test_texture_alpha=128;
+        for (unsigned iteration = 0; iteration < (snn_check ? 20u : filtering_check ? 8u : 12u); ++iteration) {
             active_aa = iteration % 4 == 0 ? 0 : iteration % 4 == 1 ? 3 : 1;
             ssaa_samples = iteration % 4 == 2 ? 2 : 4;
             if (smaa_check) active_aa = 4;
+            if (sharp_check) { test_sharp2d=true; active_aa = iteration % 5; scene_samples=active_aa==2?4:1; active_sampler=iteration%7; test_snn2d=snn_check && (iteration/2)%2;
+                if (snn_check) { active_aa=(iteration/4)%5; scene_samples=active_aa==2?4:1; } }
             if (msaa_check) { active_aa = 2; scene_samples = 2u << (iteration % 3); if (!(supported_msaa & scene_samples)) continue; }
             if (filtering_check) { active_aa = 0; active_sampler = iteration < 3 ? (iteration == 0 ? 0 : 1) : iteration - 1; }
             render_width = base_width * aa_grid_x(active_aa);
@@ -244,12 +269,75 @@ int main(int argc, char** argv) {
                 core.CmdSetPipelineLayout(*frame->commands, nri::BindPoint::GRAPHICS, *layout);
                 for (unsigned i = 0; i < 1100; ++i) bind_image(scene.sample_view, 7);
             }
+            if (sharp_check) {
+                Nv2aVertex quad[6]={{4,14,0,1,0xFFFFFFFF,0.1f,0},{28,14,0,1,0xFFFFFFFF,6.1f,0},{4,22,0,1,0xFFFFFFFF,0.1f,2},
+                    {4,22,0,1,0xFFFFFFFF,0.1f,2},{28,14,0,1,0xFFFFFFFF,6.1f,0},{28,22,0,1,0xFFFFFFFF,6.1f,2}};
+                Nv2aTexture stripes={}; stripes.width=stripes.height=64; stripes.offset=iteration+100;
+                stripes.filter=(2u<<24)|(2u<<16);
+                Nv2aBatch hud={}; hud.vertices=quad; hud.count=6; hud.texture=&stripes; hud.screen_space=0; hud.vertex_domain=nv2a_vertex_domain_from_handle(0x144);
+                test_wide=1; hud.presentation=NV2A_PRESENTATION_WORLD;
+                draw(&surface,&hud);
+                if (hud_tails[&scene].draws.back().constants.layout_x!=0.75f)
+                    throw std::runtime_error("FVF HUD stretched as world geometry in widescreen");
+                test_wide=0;
+                if (hud_tails[&scene].draws.size()!=1) throw std::runtime_error("Missing 2D capture");
+                // A later world draw must invalidate rather than hoist the old UI.
+                draw(&surface,&batch);
+                if (hud_tails.count(&scene)) throw std::runtime_error("UI reordered across world draw");
+                draw(&surface,&hud);
+                Nv2aVertex alpha_quad[6]={{30,14,0,1,0x80FFFFFF,0,0},{36,14,0,1,0x80FFFFFF,0,0},{30,22,0,1,0x80FFFFFF,0,0},
+                    {30,22,0,1,0x80FFFFFF,0,0},{36,14,0,1,0x80FFFFFF,0,0},{36,22,0,1,0x80FFFFFF,0,0}};
+                Nv2aRenderState alpha_state={}; alpha_state.blend_enable=1;
+                Nv2aBatch alpha_hud={}; alpha_hud.vertices=alpha_quad; alpha_hud.count=6; alpha_hud.state=&alpha_state; alpha_hud.screen_space=0; alpha_hud.vertex_domain=nv2a_vertex_domain_from_handle(0x144);
+                draw(&surface,&alpha_hud);
+                auto* cached=get_texture(&stripes);
+                std::vector<uint32_t> changed(64*64,0xFFFF0000);
+                upload_texture(*cached,changed.data(),64,64);
+                if (test_snn2d) {
+                    auto* old_filtered=cached->snn_filtered->object;
+                    snn_image(*cached);
+                    if (cached->snn_revision!=cached->revision || cached->snn_filtered->object==old_filtered)
+                        throw std::runtime_error("SNN cache did not invalidate after source upload");
+                }
+                if (hud_tails[&scene].draws.size()!=2) throw std::runtime_error("Invalid trailing 2D run");
+                test_sharp2d=false;
+                if (sampler_2d(&stripes)!=11) throw std::runtime_error("Original 2D filtering not restored");
+                test_sharp2d=true;
+                test_wide=1;
+                auto wide_vp=hud_viewport(1920,1080);
+                test_sharp2d=false;
+                auto original_wide_vp=hud_viewport(1920,1080);
+                if (wide_vp.width!=1920 || wide_vp.height!=1080 || wide_vp.x!=original_wide_vp.x || wide_vp.y!=original_wide_vp.y ||
+                    wide_vp.width!=original_wide_vp.width || wide_vp.height!=original_wide_vp.height)
+                    throw std::runtime_error("Sharp checkbox changed widescreen HUD size");
+                test_sharp2d=true;
+                test_wide=0;
+                auto vp=hud_viewport(1536,1152);
+                test_sharp2d=false;
+                auto original_vp=hud_viewport(1536,1152);
+                if (vp.width!=1536 || vp.height!=1152 || vp.x!=original_vp.x || vp.y!=original_vp.y ||
+                    vp.width!=original_vp.width || vp.height!=original_vp.height)
+                    throw std::runtime_error("Sharp checkbox changed 4:3 HUD size");
+                test_sharp2d=true;
+                Nv2aBatch world=hud; world.presentation=NV2A_PRESENTATION_BACKGROUND;
+                if (is_2d(world)) throw std::runtime_error("Stage background classified as HUD");
+                world.presentation=0; world.screen_space=1; world.vertex_domain=NV2A_VERTEX_DOMAIN_WORLD;
+                if (is_2d(world)) throw std::runtime_error("World FVF overridden by legacy screen hint");
+                world.vertex_domain=NV2A_VERTEX_DOMAIN_SCREEN; state.depth_test_enable=1; world.state=&state;
+                if (is_2d(world)) throw std::runtime_error("Depth effect classified as HUD");
+            }
+            Texture& scene_input=sharp_check ? hud_tails[&scene].before : scene;
             Constants constants = {};
             constants.surf_w = 1.0f/render_width; constants.surf_h = 1.0f/render_height;
             constants.tex_w = (float)aa_grid_x(active_aa); constants.tex_h = (float)aa_grid_y(active_aa, ssaa_samples);
-            if (smaa_check) smaa_image(scene,result);
-            else scale_image(scene, result, width, height, false,
+            if (smaa_check || (sharp_check && active_aa==4)) smaa_image(scene_input,result);
+            else scale_image(scene_input, result, width, height, false,
                 active_aa == 3 ? fxaa_pipeline : active_aa == 1 ? ssaa_pipeline : present_pipeline, &constants);
+            if (sharp_check) {
+                // Toggle while retaining the very same semantic HUD snapshots.
+                test_sharp2d=iteration%2==0;
+                render_hud(hud_tails[&scene],result,width,height);
+            }
             transition(result,nri::AccessBits::COLOR_ATTACHMENT,nri::Layout::COLOR_ATTACHMENT,nri::StageBits::COLOR_ATTACHMENT);
             doa1u::ui::prepare(*frame->commands);
             nri::AttachmentDesc color = {}; color.descriptor = result.view;
@@ -290,8 +378,45 @@ int main(int argc, char** argv) {
                 contrast[iteration] = hi-lo;
                 std::fprintf(stderr,"FILTER %s case %u sampler %u contrast %.0f center %u\n",argv[1],iteration,active_sampler,contrast[iteration],pixel(8,16)[0]);
             }
+            if (sharp_check) {
+                unsigned dark=0, light=0, mixed=0;
+                for (unsigned x=5;x<27;++x) {
+                    auto* c=pixel(x,16);
+                    if (c[0]<2 && c[1]<2 && c[2]<2) ++dark;
+                    else if (c[0]>253 && c[1]>253 && c[2]>253) ++light;
+                    else if (std::abs((int)c[0]-(int)c[1])>1 || std::abs((int)c[1]-(int)c[2])>1)
+                        throw std::runtime_error("Mutable source texture leaked into HUD");
+                    else ++mixed;
+                }
+                if (snn_check) {
+                    auto source_value=[&](int i) -> float {
+                        i=(i%64+64)%64;
+                        if (!test_snn2d) return i%2?255.0f:0.0f;
+                        if (i==0) return 0;
+                        if (i==63) return 255;
+                        return i%2?102.0f:153.0f;
+                    };
+                    for (unsigned x=5;x<27;++x) {
+                        float u=0.1f+(x+0.5f-4)*0.25f;
+                        float expected;
+                        if (test_sharp2d) expected=source_value((int)std::floor(u));
+                        else { float p=u-0.5f;int i=(int)std::floor(p);float f=p-i;
+                            expected=source_value(i)*(1-f)+source_value(i+1)*f; }
+                        const auto* c=pixel(x,16);
+                        if (c[3]!=128 || std::abs(c[0]-expected)>2 || std::abs(c[1]-expected)>2 || std::abs(c[2]-expected)>2)
+                            throw std::runtime_error("SNN/source-then-sampler combination pixel mismatch");
+                    }
+                }
+                auto* blended=pixel(32,16);
+                if (std::abs((int)blended[0]-144)>1 || std::abs((int)blended[1]-208)>1 || std::abs((int)blended[2]-240)>1 || blended[3]!=255)
+                    throw std::runtime_error("2D alpha composited twice or against wrong baseline");
+                if (!test_snn2d && test_sharp2d && (!dark || !light || mixed)) throw std::runtime_error("Semantic FVF HUD blurred by 3D sampling/AA");
+                if (!test_snn2d && !test_sharp2d && mixed<4) throw std::runtime_error("Original 2D linear sampling not restored");
+                std::fprintf(stderr,"SHARP2D %s AA %d samples %u: black/white pixels %u/%u\n",argv[1],active_aa,scene_samples,dark,light);
+            }
             core.UnmapBuffer(*readback);
-            if (!filtering_check && (!color_ok || !black || !red_ui)) throw std::runtime_error("Pixel mismatch: scene orientation/color or post-AA ImGui");
+            if (!sharp_check && !filtering_check && (!color_ok || !black || !red_ui)) throw std::runtime_error("Pixel mismatch: scene orientation/color or post-AA ImGui");
+            invalidate_hud(&scene);
             destroy(result); destroy(scene); destroy(depth);
         }
         if (filtering_check) {
@@ -303,6 +428,8 @@ int main(int argc, char** argv) {
         check_api_messages();
         if (validation_errors) throw std::runtime_error("NRI validation reported errors");
         cleanup();
+        if (snn_check) { std::fprintf(stderr,"PASS %s: all four SNN/nearest combinations, source-before-scaling pixels and all AA modes\n",argv[1]); return 0; }
+        if (sharp_check) { std::fprintf(stderr,"PASS %s: semantic FVF HUD, independent original/sharp sampling, all AA modes, identical on/off sizing, ordering and immutable snapshots\n",argv[1]); return 0; }
         if (smaa_check || msaa_check) {
             std::fprintf(stderr,"PASS %s: %s geometry-edge smoothing, color/alpha preservation and post-AA UI, 12 frames\n",argv[1],smaa_check?"SMAA 1x HIGH":"MSAA 2x/4x/8x");
             return 0;

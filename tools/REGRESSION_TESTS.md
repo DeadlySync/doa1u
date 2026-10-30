@@ -73,3 +73,33 @@ counts; simulates reduced capability masks to check fallback, plus resize,
 same-size recreation and pause. No game launched. Original offscreen/filter and
 WARP regressions remain required. Native D3D12 breaks are disabled in the test
 only; errors still fail through InfoQueue and NRI validation.
+
+
+Sharp 2D: `nri_backend_check <api> --sharp2d` with native validation enabled
+checks actual production snapshots/composition/readback: binary texture edges
+under anisotropic scene filtering and all five AA modes, single alpha blending,
+texture-mutation isolation, invalidation at later world draws, original-sampler
+mapping and integer 4:3/16:9 viewport sizing. `--present` also submits translucent
+2D, toggles Sharp 2D, and retains snapshots through pause, resize and AA changes.
+Run on D3D11/D3D12/Vulkan; no game or visible window is launched.
+
+
+FVF HUD regression: `--sharp2d` now deliberately clears the old screen-space hint
+and supplies the real `0x144` FVF domain. It varies the 3D sampler and toggles
+original/sharp rendering on retained snapshots, checks semantic world overrides,
+16:9 HUD layout and post-AA pixels. `widescreen_shadow_check` also checks XYZRHW
+FVF variants, world/program handles, ABI-preserving ordered metadata and direct
+shader-selection reset. `check_pb_submission.c` tests domain packets split across
+submissions with an intervening draw, preserving order and existing GET timing.
+
+
+Same-size toggle revision: `--sharp2d` now asserts identical on/off viewport
+bounds in 4:3 and 16:9, replacing integer-size expectations. Original/sharp
+pixel checks, all AA modes and hidden presentation regressions remain enabled.
+
+SNN preview: nri_backend_check <api> --snn checks all four SNN/nearest
+combinations across all five AA methods. Analytical stripe readback verifies
+source-resolution SNN before scaling, original/nearest sampling and preserved
+semi-transparent alpha. Also checks revision-cache invalidation and raw snapshot
+isolation. --present exercises SNN toggles during hidden presentation, pause
+and resize. Run native/NRI validation on d3d11, d3d12 and vulkan.

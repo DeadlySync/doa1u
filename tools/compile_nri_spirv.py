@@ -23,8 +23,9 @@ def main():
     args.output.parent.mkdir(parents=True, exist_ok=True)
     shaders = [
         ("src/render/common/guest_shaders.h", "HLSL_VS", "vs_5_0"),
-        ("src/render/common/guest_shaders.h", "HLSL_PS_TEX", "ps_5_0"),
+        ("src/render/common/guest_shaders.h", "HLSL_PS_LANCZOS", "ps_5_0"),
         ("src/render/common/guest_shaders.h", "HLSL_PS_FLAT", "ps_5_0"),
+        ("src/render/common/guest_shaders.h", "HLSL_SNN", "ps_5_0"),
         ("src/render/nri/nv2a_backend_nri.cpp", "present_vs", "vs_5_0"),
         ("src/render/nri/nv2a_backend_nri.cpp", "present_ps", "ps_5_0"),
         ("src/render/common/antialiasing.h", "HLSL_FXAA", "ps_5_0"),

@@ -44,8 +44,8 @@ def extract(source, name):
 
 shared = (ROOT / "src/render/common/guest_shaders.h").read_text()
 backend = (ROOT / "src/render/nri/nv2a_backend_nri.cpp").read_text()
-for name, profile in [("HLSL_VS", "vs_5_0"), ("HLSL_PS_TEX", "ps_5_0"),
-                      ("HLSL_PS_FLAT", "ps_5_0")]:
+for name, profile in [("HLSL_VS", "vs_5_0"), ("HLSL_PS_LANCZOS", "ps_5_0"),
+                      ("HLSL_PS_FLAT", "ps_5_0"), ("HLSL_SNN", "ps_5_0")]:
     check(extract(shared, name), name, profile)
 for name, profile in [("present_vs", "vs_5_0"), ("present_ps", "ps_5_0")]:
     check(extract(backend, name), name, profile)

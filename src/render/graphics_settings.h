@@ -15,6 +15,12 @@ int graphics_widescreen(void);
 void graphics_render_size(unsigned *width, unsigned *height);
 
 int graphics_texture_filter(void);
+/* Sharp nearest/integer-sized 2D, otherwise guest-requested sampling. */
+int graphics_sharp_2d(void);
+/* Source-resolution symmetric nearest-neighbor smoothing before 2D sampling. */
+int graphics_snn_2d(void);
+int graphics_lanczos_2d(void);
+float graphics_lanczos_ar(void);
 unsigned graphics_anisotropy(void);
 /* Stable INI IDs: Off=0, SSAA=1, FXAA=3; other IDs are not implemented. */
 int graphics_aa_method(void);

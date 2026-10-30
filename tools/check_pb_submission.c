@@ -19,6 +19,7 @@ void nv2a_pb_exec_method(uint32_t subch, uint32_t method, uint32_t param)
     channels[count] = subch; methods[count] = method; values[count++] = param;
 }
 #include "../src/xboxrecomp/src/kernel/nv2a_pb_scan.c"
+#include "../src/xboxrecomp/src/kernel/nv2a_backend.h"
 
 static uint32_t header(uint32_t method, uint32_t n) { return (n << 18) | method; }
 static void reset(uint32_t start)
@@ -70,6 +71,19 @@ int main(void)
     nv2a_pb_scan_segment(0x80004000, 0x80003808);
     assert(count == 2 && values[0] == 4 && values[1] == 19);
     assert(!nv2a_pb_scan_in_call());
-    puts("PASS: unread wrap tail, increasing/non-increasing split packets, CALL/RETURN, both JUMP encodings, unchanged GET timing");
+    /* Domain metadata must preserve stream order through split packets too. */
+    reset(0x6000);
+    ram[0x6000/4]=header(NV2A_VERTEX_DOMAIN_METHOD,1)|(7u<<13);
+    ram[0x6004/4]=NV2A_VERTEX_DOMAIN_COOKIE|NV2A_VERTEX_DOMAIN_SCREEN;
+    ram[0x6008/4]=header(0x1810,1); ram[0x600C/4]=7;
+    ram[0x6010/4]=header(NV2A_VERTEX_DOMAIN_METHOD,1)|(7u<<13);
+    ram[0x6014/4]=NV2A_VERTEX_DOMAIN_COOKIE|NV2A_VERTEX_DOMAIN_WORLD;
+    nv2a_pb_scan_segment(0x80006000,0x80006004);
+    nv2a_pb_scan_segment(0x80006004,0x80006018);
+    assert(count==3 && channels[0]==7 && methods[0]==NV2A_VERTEX_DOMAIN_METHOD);
+    assert(values[0]==(NV2A_VERTEX_DOMAIN_COOKIE|NV2A_VERTEX_DOMAIN_SCREEN));
+    assert(methods[1]==0x1810 && values[1]==7);
+    assert(channels[2]==7 && values[2]==(NV2A_VERTEX_DOMAIN_COOKIE|NV2A_VERTEX_DOMAIN_WORLD));
+    puts("PASS: ordered FVF metadata, unread wrap tail, increasing/non-increasing split packets, CALL/RETURN, both JUMP encodings, unchanged GET timing");
     return 0;
 }

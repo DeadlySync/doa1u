@@ -1,0 +1,17 @@
+Lanczos2 shader adaptation
+
+Based on Hyllian's lanczos 2-lobe with anti-ringing Shader.
+Copyright (C) 2011-2014 Hyllian/Jararaca - sergiogdb@gmail.com
+Source: https://github.com/libretro/common-shaders/blob/master/windowed/shaders/lanczos2-sharp.cg
+
+Licensed under the GNU General Public License, version 2 or (at your option)
+any later version. This shader adaptation is distributed under the same terms.
+License text: https://www.gnu.org/licenses/old-licenses/gpl-2.0.txt
+
+Distributed without any warranty, including implied warranties of merchantability
+or fitness for a particular purpose.
+
+Adaptation: HLSL guest-texture sampling, live anti-ringing uniform, premultiplied
+RGBA and bounded alpha for transparent game artwork. Radial 4x4 weights and the
+central 2x2 anti-ringing bounds follow the upstream shader. Window sinc 0.5,
+sinc 1.0, default anti-ringing strength 0.8.

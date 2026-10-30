@@ -15,9 +15,16 @@ int graphics_widescreen(void);
 void graphics_render_size(unsigned *width, unsigned *height);
 
 int graphics_texture_filter(void);
+/* Sharp nearest/integer-sized 2D, otherwise guest-requested sampling. */
+int graphics_sharp_2d(void);
+/* Source-resolution symmetric nearest-neighbor smoothing before 2D sampling. */
+int graphics_snn_2d(void);
+int graphics_lanczos_2d(void);
+float graphics_lanczos_ar(void);
 unsigned graphics_anisotropy(void);
 /* Stable INI IDs: Off=0, SSAA=1, FXAA=3; other IDs are not implemented. */
 int graphics_aa_method(void);
+unsigned graphics_msaa_samples(void);
 unsigned graphics_ssaa_samples(void);
 
 /* Apply saved/live client-size preset between frames on the window thread. */
@@ -29,6 +36,10 @@ void graphics_ui_renderer_name(const char *name);
 int graphics_ui_init(void *window, void *device, void *context);
 int graphics_ui_message(void *window, unsigned message, uintptr_t wparam, intptr_t lparam);
 void graphics_ui_draw(void);
+/* Build draw data; NRI owns GPU rendering on all APIs. */
+void graphics_ui_frame(void);
+int graphics_backend(void);
+void graphics_ui_shutdown(void);
 
 #ifdef __cplusplus
 }

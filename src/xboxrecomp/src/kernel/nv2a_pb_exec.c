@@ -2065,6 +2065,7 @@ static void backend_from_xf(const Nv2aVshOutput *v, Nv2aVertex *o)
 /* `textured`: the batch carried texture coordinates, so the bound texture is
  * part of it. */
 static uint32_t s_backend_presentation;
+static uint32_t s_backend_vertex_domain;
 static int batch_uses_program(void);
 static void backend_flush(int textured)
 {
@@ -2082,6 +2083,7 @@ static void backend_flush(int textured)
     batch.texture = NULL;
     batch.state = &rs;
     batch.presentation = s_backend_presentation;
+    batch.vertex_domain = s_backend_vertex_domain;
     batch.screen_space = !batch_is_ffp() && !batch_uses_program();
     if (textured && s_gpu.texs[0].valid) {
         tex.offset = s_gpu.texs[0].offset;
@@ -3795,6 +3797,13 @@ void nv2a_pb_exec_method(uint32_t subch, uint32_t method, uint32_t param)
     if (subch == 7 && method == NV2A_PRESENTATION_METHOD
             && (param & 0xFFFF0000u) == NV2A_PRESENTATION_COOKIE) {
         s_backend_presentation = param & 0xFFFFu;
+        return;
+    }
+
+    if (subch == 7 && method == NV2A_VERTEX_DOMAIN_METHOD
+            && (param & 0xFFFF0000u) == NV2A_VERTEX_DOMAIN_COOKIE) {
+        uint32_t domain = param & 0xFFFFu;
+        s_backend_vertex_domain = domain <= NV2A_VERTEX_DOMAIN_WORLD ? domain : NV2A_VERTEX_DOMAIN_UNKNOWN;
         return;
     }
 

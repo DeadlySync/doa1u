@@ -26,8 +26,8 @@ void renderer_register(void)
     int legacy = choice && (!_stricmp(choice, "legacy-d3d11") || !_stricmp(choice, "d3d11"));
 	
     if (choice && !legacy && _stricmp(choice, "nri"))
-        fprintf(stderr, "[GPU] Unknown RECOMP_RENDERER=%s; using NRI/D3D11\n", choice);
+        fprintf(stderr, "[GPU] Unknown RECOMP_RENDERER=%s; using NRI\n", choice);
 	
     nv2a_backend_register(legacy ? nv2a_d3d11_backend() : nv2a_nri_backend());
-    fprintf(stderr, "[GPU] %s backend registered\n", legacy ? "Legacy direct D3D11" : "NRI/D3D11");
+    fprintf(stderr, "[GPU] %s backend registered\n", legacy ? "Legacy direct D3D11" : "NRI (API selected at initialization)");
 }

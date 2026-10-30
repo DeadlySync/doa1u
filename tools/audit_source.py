@@ -16,7 +16,8 @@ def code_only(text):
 def main():
     files = sorted(p for p in SRC.rglob("*") if p.suffix in (".c", ".h")
                    and "gen" not in p.parts and "third_party" not in p.parts
-                   and "xboxrecomp" not in p.parts)
+                   and "xboxrecomp" not in p.parts
+                   and p.parent != SRC / "render/nri/smaa") # upstream SMAA lookup headers, not handwritten
     definitions = defaultdict(list)
     references = Counter()
     errors = []

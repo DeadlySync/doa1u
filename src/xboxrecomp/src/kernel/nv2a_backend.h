@@ -36,6 +36,22 @@
 #define NV2A_PRESENTATION_WORLD 1u
 #define NV2A_PRESENTATION_BACKGROUND 2u
 
+/* Ordered host metadata from XDK SetVertexShader. FVF XYZRHW is explicitly
+ * pretransformed even when the XDK implements it with a passthrough program. */
+#define NV2A_VERTEX_DOMAIN_METHOD 0x1FECu
+#define NV2A_VERTEX_DOMAIN_COOKIE 0xDA020000u
+#define NV2A_VERTEX_DOMAIN_UNKNOWN 0u
+#define NV2A_VERTEX_DOMAIN_SCREEN 1u
+#define NV2A_VERTEX_DOMAIN_WORLD 2u
+
+static inline uint32_t nv2a_vertex_domain_from_handle(uint32_t handle)
+{
+    /* Odd values are shader handles, not FVF bits. Never infer their domain. */
+    if (handle & 1u) return NV2A_VERTEX_DOMAIN_UNKNOWN;
+    return (handle & 0xEu) == 4u ? NV2A_VERTEX_DOMAIN_SCREEN : NV2A_VERTEX_DOMAIN_WORLD;
+}
+
+
 /* The colour surface being drawn into, in real (anti-aliased) pixels.
  * aa_sx/aa_sy give the anti-aliasing factor, so width/aa_sx is the logical
  * size the title thinks it renders at (e.g. 640x480). */
@@ -95,7 +111,8 @@ typedef struct {
     const Nv2aTexture *texture;     /* NULL: untextured */
     const Nv2aRenderState *state;
     uint32_t presentation;         /* private marker, 0 = original 4:3 layout */
-    uint32_t screen_space;         /* pretransformed, not fixed/program 3D */
+    uint32_t screen_space;         /* legacy executor transform-path hint */
+    uint32_t vertex_domain;        /* explicit FVF semantics, independent of program execution */
 } Nv2aBatch;
 
 typedef struct {

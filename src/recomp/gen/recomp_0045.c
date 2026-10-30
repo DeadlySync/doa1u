@@ -1981,7 +1981,7 @@ loc_0016785C: ;
  * CC: cdecl, 2 params, returns int_or_void
  * Frame: fpo_leaf
  */
-void sub_00167870(void)
+void sub_00167870_gen(void) /* named shader-domain reset shadow */
 {
     int _flags = 0; /* fallback flag var */
     uint32_t _fa = 0, _fb = 0;
@@ -2704,7 +2704,7 @@ loc_00167BCD: ;
  * CC: cdecl, 1 params, returns int_or_void
  * Frame: fpo_leaf
  */
-void sub_00167BD0(void)
+void sub_00167BD0_gen(void) /* named FVF presentation shadow */
 {
     uint32_t ebp = 0;
     ebp = g_ebp;  /* frameless: caller's frame */

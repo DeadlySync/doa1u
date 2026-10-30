@@ -29,7 +29,7 @@ static uint32_t as_bits(float v)
 /* Emit a private presentation marker through the ORIGINAL ring-space writer.
  * The executor consumes it in command order; never share mutable guest draw
  * context with the GPU thread. Preserve all guest registers around this call. */
-static void presentation_marker(unsigned mode)
+static void ordered_marker(unsigned method, unsigned value)
 {
     uint32_t saved[] = 
 	{
@@ -44,8 +44,8 @@ static void presentation_marker(unsigned mode)
 		g_seh_ebp
 	};
 	
-    g_ecx = (1u << 18) | (7u << 13) | NV2A_PRESENTATION_METHOD;
-    g_edx = NV2A_PRESENTATION_COOKIE | mode;
+    g_ecx = (1u << 18) | (7u << 13) | method;
+    g_edx = value;
 	
     gd_guest_call(0x00160D00u, 0, NULL, 0);
 	
@@ -58,6 +58,32 @@ static void presentation_marker(unsigned mode)
 	g_ebp=saved[6]; 
 	g_esp=saved[7]; 
 	g_seh_ebp=saved[8];
+}
+
+static void presentation_marker(unsigned mode)
+{
+    ordered_marker(NV2A_PRESENTATION_METHOD, NV2A_PRESENTATION_COOKIE | mode);
+}
+
+/* XDK FVF selection is the semantic source of truth, not whether its internal
+ * implementation happens to use a GPU vertex program. Preserve the original
+ * stack argument/register ABI and keep metadata ordered with guest draws. */
+extern void sub_00167BD0_gen(void);
+void sub_00167BD0(void)
+{
+    uint32_t handle = GMEM32(g_esp + 4);
+    ordered_marker(NV2A_VERTEX_DOMAIN_METHOD,
+        NV2A_VERTEX_DOMAIN_COOKIE | nv2a_vertex_domain_from_handle(handle));
+    sub_00167BD0_gen();
+}
+
+/* Direct program selection must clear a preceding FVF classification. */
+extern void sub_00167870_gen(void);
+void sub_00167870(void)
+{
+    ordered_marker(NV2A_VERTEX_DOMAIN_METHOD,
+        NV2A_VERTEX_DOMAIN_COOKIE | NV2A_VERTEX_DOMAIN_UNKNOWN);
+    sub_00167870_gen();
 }
 
 /* Called by the existing set_camera_draw_stage shadow before its original. */

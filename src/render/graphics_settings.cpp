@@ -29,12 +29,15 @@ namespace
 	struct Preferences
 	{
 		int aspect = 0, window43 = 0, window169 = 0, render43 = 0, render169 = 0;
+		bool sharp2d = true, snn2d = false; // dormant experiments
+        bool lanczos2d = true;
+        int lanczos_ar = 80;
 		int backend = 0, filtering = 1, anisotropy = 3, aa = 0, ssaa = 1, msaa = 1;
 		
 		std::string adapter = "automatic";
 		bool differs(const Preferences &o) const
 		{
-			return aspect != o.aspect || window43 != o.window43 || window169 != o.window169
+			return lanczos2d != o.lanczos2d || lanczos_ar != o.lanczos_ar || snn2d != o.snn2d || sharp2d != o.sharp2d || aspect != o.aspect || window43 != o.window43 || window169 != o.window169
 				   || render43 != o.render43 || render169 != o.render169 || backend != o.backend
 				   || filtering != o.filtering || anisotropy != o.anisotropy || aa != o.aa || ssaa != o.ssaa
 				   || msaa != o.msaa || adapter != o.adapter;
@@ -53,7 +56,7 @@ namespace
 	std::string notice;
 	const char *renderer_name = "DirectX 11 (legacy)";
 	HWND hwnd;
-	bool ready = false, visible = false;
+	bool ready = false, visible = false, native_dx11 = false;
 	bool save_error = false;
 
 	int read_int(const wchar_t *key, int fallback, int maximum)
@@ -81,12 +84,12 @@ namespace
 		char text[2048];
 		int count = snprintf(text, sizeof text,
 							 "; DOA1U host graphics preferences. Aspect, window and NRI resolution/filtering are active.\r\n"
-							 "; NRI SSAA/FXAA are active. GPU/backend/MSAA/SMAA remain unavailable.\r\n"
+							 "; NRI SSAA/MSAA/FXAA/SMAA are active. GPU selection remains unavailable. Backend applies on restart.\r\n"
 							 "; Resolution values below are preset indices, independently per aspect.\r\n"
 							 "[Graphics]\r\nVersion=1\r\nAspectRatio=%d\r\n"
 							 "Window43=%d\r\nWindow169=%d\r\nRender43=%d\r\nRender169=%d\r\n"
 							 "Adapter=%s\r\nBackend=%d\r\nFiltering=%d\r\nAnisotropy=%d\r\n"
-							 "AntiAliasing=%d\r\nSSAA=%d\r\nMSAA=%d\r\n",
+							 "Lanczos2D=%d\r\nLANCZOS2_AR_STRENGTH=%d\r\nSharp2D=%d\r\nSNN2D=%d\r\nAntiAliasing=%d\r\nSSAA=%d\r\nMSAA=%d\r\n",
 							 prefs.aspect, 
 							 prefs.window43, 
 							 prefs.window169, 
@@ -96,6 +99,9 @@ namespace
 							 prefs.backend, 
 							 prefs.filtering, 
 							 prefs.anisotropy, 
+							 prefs.lanczos2d ? 1 : 0, prefs.lanczos_ar,
+                             prefs.sharp2d ? 1 : 0,
+                             prefs.snn2d ? 1 : 0,
 							 prefs.aa,
 							 prefs.ssaa, 
 							 prefs.msaa);
@@ -304,13 +310,18 @@ namespace
 				}
 				
 				settings_combo("Rendering backend", &prefs.backend, "DirectX 11\0DirectX 12\0Vulkan\0");
-				ImGui::TextWrapped("Active renderer: %s. GPU/backend selections require future implementation.", renderer_name);
+				ImGui::TextWrapped("Active renderer: %s. Save and restart to change backend. GPU selection is not yet applied.", renderer_name);
 			}
 			
 			if (ImGui::CollapsingHeader("Texture filtering", ImGuiTreeNodeFlags_DefaultOpen))
 			{
-				settings_combo("Filter", &prefs.filtering, "Nearest-neighbor\0Bilinear\0Trilinear\0Anisotropic\0");
-				ImGui::TextWrapped("Filtering applies next frame. FMV use bilinear filtering.");
+				settings_combo("3D texture filter", &prefs.filtering, "Nearest-neighbor\0Bilinear\0Trilinear\0Anisotropic\0");
+				const bool nri_supported = std::string(renderer_name).find("NRI / ") == 0;
+                ImGui::BeginDisabled(!nri_supported);
+                ImGui::Checkbox("2D filtering (Lanczos2 + anti-ringing)", &prefs.lanczos2d);
+                ImGui::SliderInt("Anti-ringing strength", &prefs.lanczos_ar, 0, 100, "%d%%");
+                ImGui::EndDisabled();
+				ImGui::TextWrapped("Lanczos2 filters 2D artwork during scaling. Anti-ringing: 0% unclamped, 100% fully clamped. Live adjustment; no rebuild. Size unchanged. Movies stay bilinear.");
 				if (prefs.filtering == 3)
 					settings_combo("Anisotropy", &prefs.anisotropy,
 								 "2x\0"
@@ -321,14 +332,12 @@ namespace
 			
 			if (ImGui::CollapsingHeader("Anti-aliasing", ImGuiTreeNodeFlags_DefaultOpen))
 			{
-				const bool supported = std::string(renderer_name) == "NRI / DirectX 11";
+				const bool supported = std::string(renderer_name).find("NRI / ") == 0;
 				ImGui::BeginDisabled(!supported);
-				const char *names[] = {"Off", "SSAA", "MSAA (unavailable)", "FXAA", "SMAA (unavailable)"};
+				const char *names[] = {"Off", "SSAA", "MSAA", "FXAA", "SMAA"};
 				if (begin_settings_combo("AA method", names[prefs.aa])) {
 					for (int i = 0; i < 5; ++i) {
-						ImGui::BeginDisabled(i == 2 || i == 4);
 						if (ImGui::Selectable(names[i], prefs.aa == i)) prefs.aa = i;
-						ImGui::EndDisabled();
 					}
 					ImGui::EndCombo();
 				}
@@ -337,7 +346,12 @@ namespace
 					const Size size = prefs.aspect ? sizes169[prefs.render169] : sizes43[prefs.render43];
 					ImGui::Text("Render size: %d x %d", size.w * 2, size.h * (prefs.ssaa ? 2 : 1));
 					ImGui::TextWrapped("Supersampling increases GPU work and memory use. Applies next frame.");
-				} else if (prefs.aa == 3) {
+				} else if (prefs.aa == 2) {
+                    settings_combo("MSAA samples", &prefs.msaa, "2x\0" "4x\0" "8x\0");
+                    ImGui::TextWrapped("Multisampling smooths geometry edges. Unsupported counts fall back to a supported count. Applies next frame.");
+                } else if (prefs.aa == 4) {
+                    ImGui::TextWrapped("SMAA 1x (High): spatial edge detection and morphological blending. Applies next frame.");
+                } else if (prefs.aa == 3) {
 					ImGui::TextWrapped("FXAA smooths high-contrast edges without increasing render resolution. Applies next frame.");
 				}
 				ImGui::EndDisabled();
@@ -393,6 +407,10 @@ extern "C" void graphics_settings_init(void)
 	prefs.render43 = read_int(L"Render43", 0, 10);
 	prefs.render169 = read_int(L"Render169", 0, 5);
 	prefs.backend = read_int(L"Backend", 0, 2);
+	prefs.lanczos2d = read_int(L"Lanczos2D", 1, 1) != 0;
+    prefs.lanczos_ar = read_int(L"LANCZOS2_AR_STRENGTH", 80, 100);
+	prefs.snn2d = read_int(L"SNN2D", 0, 1) != 0;
+	prefs.sharp2d = read_int(L"Sharp2D", 1, 1) != 0;
 	prefs.filtering = read_int(L"Filtering", 1, 3);
 	prefs.anisotropy = read_int(L"Anisotropy", 3, 3);
 	prefs.aa = read_int(L"AntiAliasing", 0, 4);
@@ -430,7 +448,12 @@ extern "C" void graphics_render_size(unsigned *width, unsigned *height)
 
 extern "C" int graphics_aa_method(void)
 {
-	return prefs.aa == 1 || prefs.aa == 3 ? prefs.aa : 0;
+	return prefs.aa;
+}
+
+extern "C" unsigned graphics_msaa_samples(void)
+{
+    return 2u << prefs.msaa;
 }
 
 extern "C" unsigned graphics_ssaa_samples(void)
@@ -540,7 +563,8 @@ extern "C" int graphics_ui_init(void *window, void *device, void *context)
 		return 0;
 	}
 
-	if (!ImGui_ImplDX11_Init((ID3D11Device *)device, (ID3D11DeviceContext *)context))
+	native_dx11 = device != nullptr;
+	if (native_dx11 && !ImGui_ImplDX11_Init((ID3D11Device *)device, (ID3D11DeviceContext *)context))
 	{
 		ImGui_ImplWin32_Shutdown();
 		ImGui::DestroyContext();
@@ -586,12 +610,12 @@ extern "C" int graphics_ui_message(void *window, unsigned message, uintptr_t wpa
 	return 0;
 }
 
-extern "C" void graphics_ui_draw(void)
+extern "C" void graphics_ui_frame(void)
 {
 	if (!ready)
 		return;
 
-	ImGui_ImplDX11_NewFrame();
+	if (native_dx11) ImGui_ImplDX11_NewFrame();
 	ImGui_ImplWin32_NewFrame();
 	ImGui::NewFrame();
 
@@ -599,5 +623,29 @@ extern "C" void graphics_ui_draw(void)
 		panel();
 
 	ImGui::Render();
-	ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
 }
+
+extern "C" void graphics_ui_draw(void)
+{
+	graphics_ui_frame();
+	if (ready && native_dx11) ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+}
+
+extern "C" void graphics_ui_shutdown(void)
+{
+    if (!ready) return;
+    if (native_dx11) ImGui_ImplDX11_Shutdown();
+    ImGui_ImplWin32_Shutdown();
+    ImGui::DestroyContext();
+    ready = visible = false;
+    adapters.clear();
+}
+
+extern "C" int graphics_backend(void) { return prefs.backend; }
+
+extern "C" int graphics_sharp_2d(void) { return 0; /* dormant nearest experiment */ }
+
+extern "C" int graphics_snn_2d(void) { return 0; /* dormant SNN experiment */ }
+
+extern "C" int graphics_lanczos_2d(void) { return prefs.lanczos2d; }
+extern "C" float graphics_lanczos_ar(void) { return prefs.lanczos_ar / 100.0f; }

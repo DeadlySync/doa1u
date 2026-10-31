@@ -103,7 +103,19 @@ void launcher_art_draw(float w, float h)
 		draw->AddRectFilled(ImVec2(0, 0), ImVec2(w, h), IM_COL32(14, 14, 17, 255));
 
 	if (logo)
-		draw->AddImage(logo->GetTexRef(), ImVec2(w * .035f, h * .04f), ImVec2(w * .47f, h * .155f), ImVec2(.035f, .07f), ImVec2(.467f, .185f));
+	{
+		// Dedicated 600x172 artwork: ignore transparent padding, keep its aspect.
+		const float aspect = 580.f / 110.f;
+		float logo_h = h * .115f;
+		float logo_w = logo_h * aspect;
+		if (logo_w > w * .435f) {
+			logo_w = w * .435f;
+			logo_h = logo_w / aspect;
+		}
+		ImVec2 pos(w * .035f, h * .04f);
+		draw->AddImage(logo->GetTexRef(), pos, ImVec2(pos.x + logo_w, pos.y + logo_h),
+			ImVec2(20.f / 600.f, 31.f / 172.f), ImVec2(1.f, 141.f / 172.f));
+	}
 }
 
 void launcher_art_shutdown()

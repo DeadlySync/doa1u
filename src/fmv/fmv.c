@@ -21,6 +21,19 @@ static uint64_t s_serial, s_decoded;
 
 static LARGE_INTEGER s_started, s_frequency;
 static HWAVEOUT s_audio;
+static int s_host_paused;
+static LARGE_INTEGER s_pause_started;
+void fmv_host_pause(int paused)
+{
+    AcquireSRWLockExclusive(&s_frame_lock);
+    if((paused!=0)!=s_host_paused){
+        LARGE_INTEGER now;QueryPerformanceCounter(&now);
+        if(paused){s_pause_started=now;if(s_audio)waveOutPause(s_audio);}
+        else {if(s_playing)s_started.QuadPart+=now.QuadPart-s_pause_started.QuadPart;if(s_audio)waveOutRestart(s_audio);}
+        s_host_paused=paused!=0;
+    }
+    ReleaseSRWLockExclusive(&s_frame_lock);
+}
 static WAVEHDR s_audio_header;
 
 const uint8_t* fmv_frame_acquire(unsigned* w, unsigned* h, uint64_t* serial, float rect[4])
@@ -187,7 +200,7 @@ void cri_movie_start(void)
 
 		QueryPerformanceFrequency(&s_frequency); QueryPerformanceCounter(&s_started);
 		if (s_audio) 
-			waveOutRestart(s_audio);
+			if(!s_host_paused)waveOutRestart(s_audio);
 	}
 
 	ReleaseSRWLockExclusive(&s_frame_lock);
@@ -210,7 +223,7 @@ void cri_movie_update(void)
 {
 	AcquireSRWLockExclusive(&s_frame_lock);
 
-	if (s_playing) 
+	if (s_playing && !s_host_paused)
 	{
 		LARGE_INTEGER now; 
 		QueryPerformanceCounter(&now);

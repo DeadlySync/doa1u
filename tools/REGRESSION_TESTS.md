@@ -103,3 +103,40 @@ source-resolution SNN before scaling, original/nearest sampling and preserved
 semi-transparent alpha. Also checks revision-cache invalidation and raw snapshot
 isolation. --present exercises SNN toggles during hidden presentation, pause
 and resize. Run native/NRI validation on d3d11, d3d12 and vulkan.
+
+## Launcher and SDL3 input
+
+`cmake --build build --config Release --target launcher_check`, then run
+`build/Release/launcher_check.exe` from a writable output directory. This does
+not run the game. It uses SDL virtual controllers and a hidden WARP window.
+Checks cover two-player join/routing, ignored third controller, disconnect and
+replacement slots, menu input suppression, conflict swaps, player isolation,
+single-assignment Undo, non-undoable defaults, reserved keys, capture priority,
+INI save/reload/validation and pause ownership. It renders all three actual
+launcher pages and writes `launcher-page-{0,1,2}.png` for inspection.
+
+Manual validation still required: physical wired/Bluetooth controllers,
+multi-monitor placement, startup-to-selected-backend transition and the game's
+pause/resume path (including a previously paused match). Never substitute this
+check for running those scenarios manually.
+
+### First-run Play / retained-window thread regression (2026-10-30)
+
+`launcher_check` also executes the actual startup launcher hidden, saves/Plays,
+then reuses its exact HWND on a different rendering thread. It verifies the
+owner continues servicing synchronous messages, input is queued and F1 reaches
+ImGui only on the renderer thread, and UI context recreation works. Replacement
+swapchains on that retained HWND are checked with native DX11 and all three NRI
+backends (D3D11/D3D12/Vulkan). Temporary test INI only; no guest code executes.
+The check now uses hardware graphics for the handoff section, WARP for page
+captures. Manual first-run Play acceptance remains a separate user check.
+
+### Enter / launcher pause gate (2026-10-30)
+
+`launcher_check` validates default Enter-to-Start snapshots, assignable Enter,
+exact-old-default migration without changing custom profiles, actual highlighted
+Save activation via ImGui keyboard events, guest frame wait/resume and host audio
+pause-call state (audio function is a stub in this test). `nri_backend_check
+<api> --present` exercises the production backend's paused UI-only loop for five
+repaints without new guest frames, then resumes; runs on all three APIs. Audible
+bank/APU/FMV pause/resume and game timing remain manual acceptance checks.

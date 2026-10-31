@@ -1,2 +1,4 @@
 // Lowest icon resource ID is used by Windows for the executable's icon.
 1 ICON "DOA1U.ico"
+201 RCDATA "../docs/assets/launcher-background.png"
+202 RCDATA "../docs/assets/launcher-final-mockup-v3.png"

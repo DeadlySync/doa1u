@@ -11,6 +11,7 @@ static bool test_sharp2d = true, test_snn2d = false;
 static int test_wide = 0;
 static uint32_t test_texture_alpha = 255;
 static unsigned test_msaa_requested = 4;
+static int test_pause_remaining=0;
 extern "C" {
 void xbox_InputKeySet(int, int) {}
 void xbox_InputKeysClear() {}
@@ -30,6 +31,7 @@ int nv2a_backend_decode_texture(const Nv2aTexture* t, uint32_t* pixels) {
 int nv2a_backend_p8_source(const Nv2aTexture*, const uint8_t**, const uint8_t**) { return 0; }
 int graphics_widescreen() { return test_wide; }
 int graphics_backend() { return 0; }
+int graphics_game_paused() { return test_pause_remaining>0; }
 void graphics_render_size(unsigned* w, unsigned* h) { *w = 64; *h = 48; }
 int graphics_aa_method() { return active_aa; }
 unsigned graphics_ssaa_samples() { return ssaa_samples; }
@@ -43,6 +45,9 @@ float graphics_lanczos_ar() { return test_lanczos_ar; }
 int graphics_snn_2d() { return test_snn2d; }
 unsigned graphics_anisotropy() { return 2; }
 void graphics_window_apply(void*) {}
+void *graphics_take_startup_window() { return nullptr; }
+int graphics_window_defer_message(void*,unsigned,uintptr_t,intptr_t) { return 0; }
+void graphics_window_dispatch_pending() {}
 void graphics_ui_renderer_name(const char*) {}
 int graphics_ui_message(void*, unsigned, uintptr_t, intptr_t) { return 0; }
 int graphics_ui_init(void*, void*, void*) {
@@ -53,6 +58,7 @@ int graphics_ui_init(void*, void*, void*) {
     return 1;
 }
 void graphics_ui_frame() {
+    if(test_pause_remaining>0)--test_pause_remaining;
     auto& io = ImGui::GetIO();
     io.DisplaySize = ImVec2(64, 48);
     io.DeltaTime = 1.0f / 60;
@@ -187,7 +193,11 @@ int main(int argc, char** argv) {
                     draw(&surface,&batch);
                 } // Pause includes a resolution/AA change with retained 2D.
 
-                flip();
+                if(i==7) {
+                    auto before=frame_number;test_pause_remaining=5;
+                    backend_flip();
+                    if(test_pause_remaining||frame_number-before!=5)throw std::runtime_error("Paused overlay must repaint without guest flips and return after resume");
+                } else flip();
             }
             check_api_messages();
             if (validation_errors) throw std::runtime_error("Presentation validation errors");

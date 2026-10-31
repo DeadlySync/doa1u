@@ -381,6 +381,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     crash_capture_init();
     AddVectoredExceptionHandler(1, veh_handler);
 
+    /* No guest initialization/execution behind the first-run launcher. */
+    if (!graphics_launcher_run()) return 0;
+    graphics_game_started();
+
     /* Step 1: Load XBE */
     if (!load_xbe(xbe_path, &xbe_data, &xbe_size)) {
         MessageBoxA(NULL, "Failed to load Doa1.xbe.\n"

@@ -215,3 +215,12 @@ void audio_frame_module(uint64_t frame)
         }
     }
 }
+
+/* Launcher pause is independent of the original match pause state. */
+extern void bank_host_pause(int paused);
+extern void fmv_host_pause(int paused);
+void audio_host_pause(int paused)
+{
+    bank_host_pause(paused);
+    fmv_host_pause(paused);
+}

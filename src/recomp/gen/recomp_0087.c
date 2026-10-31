@@ -2622,14 +2622,28 @@ void sub_002243CB(void)
     ebp = g_seh_ebp; /* fpo_leaf: inherit caller's frame */
 
 loc_002243CB: ;
-    { extern void recomp_host_xinput_getstate(uint32_t); /* XAPILIB::XInputGetState override */
-      recomp_host_xinput_getstate(MEM32(esp + 8)); eax = 0; esp += 12; return; }
+    { 
+        /* XAPILIB::XInputGetState override */
+        extern uint32_t recomp_host_xinput_getstate(uint32_t,uint32_t); 
+        eax = recomp_host_xinput_getstate(MEM32(esp + 4), MEM32(esp + 8)); 
+        esp += 12; 
+        
+        return; 
+    }
     PUSH32(esp, ebx);
     PUSH32(esp, esi);
     ebx = 0; /* xor self */
+
     _fa = (uint32_t)(ebx) & 0xFFFFFFFFu; _fas = (int32_t)(int32_t)(_fa); /* xor result */
-    { uint32_t _icall_esp = g_esp;
-    { uint32_t _icall_target = MEM32(0x22BC54); PUSH32(esp, 0x002243D5u); RECOMP_ICALL_SAFE_AT(_icall_target, _icall_esp, 0x002243CFu); } /* indirect call */
+    
+    {
+        uint32_t _icall_esp = g_esp;
+    
+        { 
+            uint32_t _icall_target = MEM32(0x22BC54); 
+            PUSH32(esp, 0x002243D5u); 
+            RECOMP_ICALL_SAFE_AT(_icall_target, _icall_esp, 0x002243CFu); 
+        } /* indirect call */
     }
 
 loc_002243D5: ;

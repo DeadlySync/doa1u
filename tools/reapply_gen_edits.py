@@ -493,8 +493,8 @@ PATCHES = [
     dict(name="XInputGetState override", kind="after_label", anchor="002243CB",
          marker="XAPILIB::XInputGetState override",
          block=
-"""    { extern void recomp_host_xinput_getstate(uint32_t); /* XAPILIB::XInputGetState override */
-      recomp_host_xinput_getstate(MEM32(esp + 8)); eax = 0; esp += 12; return; }
+"""    { extern uint32_t recomp_host_xinput_getstate(uint32_t,uint32_t); /* XAPILIB::XInputGetState override */
+      eax = recomp_host_xinput_getstate(MEM32(esp + 4), MEM32(esp + 8)); esp += 12; return; }
 """),
     dict(name="XInputSetState override", kind="after_label", anchor="0022443E",
          marker="XAPILIB::XInputSetState override",

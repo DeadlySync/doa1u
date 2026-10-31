@@ -16,10 +16,13 @@ extern volatile uint32_t g_icall_trace[16];
 extern volatile uint32_t g_icall_trace_idx;
 extern volatile uint64_t g_icall_count;
 
-/* Shadows resolve at link time through renamed _gen bodies; no dynamic override is registered. */
+extern void training_stage_change(void);
+
+/* Most shadows resolve at link time; recover missing interior entries here. */
 recomp_func_t recomp_lookup_manual(uint32_t xbox_va)
 {
-    (void)xbox_va;
+    if (xbox_va == 0x0003E404u)
+        return training_stage_change;
     return (recomp_func_t)0;
 }
 

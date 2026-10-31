@@ -50,7 +50,7 @@ namespace
 		RECT r = { 0,0,1280,720 };
 		AdjustWindowRect(&r, WS_OVERLAPPEDWINDOW, FALSE);
 
-		HWND w = CreateWindowW(wc.lpszClassName, L"DOA1U", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, r.right - r.left, r.bottom - r.top, nullptr, nullptr, wc.hInstance, nullptr);
+		HWND w = CreateWindowW(wc.lpszClassName, L"Dead or Alive 1: ULTIMATE", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, r.right - r.left, r.bottom - r.top, nullptr, nullptr, wc.hInstance, nullptr);
 		if (!w)
 		{
 			finish(0); return 0;

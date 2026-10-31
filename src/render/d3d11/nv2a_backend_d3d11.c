@@ -333,7 +333,7 @@ static int ensure_device(const Nv2aSurface *s)
     if(s_hwnd)
         SetWindowLongPtrW(s_hwnd,GWLP_WNDPROC,(LONG_PTR)wndproc);
     else 
-        s_hwnd = CreateWindowExA(0, "XboxRecompD3D11", "Dead or Alive - ULTIMATE",
+        s_hwnd = CreateWindowExA(0, "XboxRecompD3D11", "Dead or Alive 1: ULTIMATE",
                              WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT,
                              r.right - r.left, r.bottom - r.top,
                              NULL, NULL, wc.hInstance, NULL);

@@ -87,6 +87,9 @@ DEFAULT_GEN = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__fil
 # marker: unique substring; if already present in the file, skip (idempotent).
 
 PATCHES = [
+    dict(name="throw move-table split flags shadow", kind="rename_def",
+         anchor="void sub_000570E0(void)", marker="sub_000570E0_gen(void)",
+         new="void sub_000570E0_gen(void) /* named throw move-table shadow */"),
     dict(name="direct shader domain reset shadow", kind="rename_def",
          anchor="void sub_00167870(void)", marker="sub_00167870_gen(void)",
          new="void sub_00167870_gen(void) /* named shader-domain reset shadow */"),

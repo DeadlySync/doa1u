@@ -46,8 +46,14 @@ endif()
 
 # Generated code stays in its recompiler-owned directory.
 file(GLOB RECOMP_GEN_SOURCES CONFIGURE_DEPENDS "src/recomp/gen/*.c")
+if(MSVC AND NOT CMAKE_SCRIPT_MODE_FILE)
+    set_source_files_properties(${RECOMP_GEN_SOURCES}
+        PROPERTIES COMPILE_OPTIONS "/FI${CMAKE_CURRENT_SOURCE_DIR}/src/render/fighters/collision_watch.h")
+endif()
 set(GAME_SOURCES
     src/main.c
+    src/game/training_stage_change.c
+    src/game/throw_move_lookup.c
     src/runtime/recomp_manual.c
     src/runtime/fix_fiber_runtime.c
     src/runtime/reach_gameplay_shims.c
@@ -174,3 +180,13 @@ if(NOT CMAKE_SCRIPT_MODE_FILE)
         target_include_directories(${target} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
     endforeach()
 endif()
+
+# Offline regression for the recovered training-menu interior switch target.
+add_executable(throw_move_lookup_check EXCLUDE_FROM_ALL
+    tools/throw_move_lookup_check.c src/game/throw_move_lookup.c)
+target_include_directories(throw_move_lookup_check PRIVATE src)
+
+add_executable(training_stage_change_check EXCLUDE_FROM_ALL
+    tools/training_stage_change_check.c src/game/training_stage_change.c
+    src/runtime/recomp_manual.c)
+target_include_directories(training_stage_change_check PRIVATE src)

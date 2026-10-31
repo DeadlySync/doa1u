@@ -1,11 +1,18 @@
 # Retained regression checks
 
+2026-10-31 launcher_check now verifies P1 last-active keyboard/pad selection
+with connected pads: whole-state replacement, held inputs/repeats/host shortcuts,
+P2 isolation, axis drift/hysteresis, menu/focus suppression, disconnect keyboard
+fallback and slot-preserving replacement. Hidden suite PASS; physical device
+and actual gameplay switching remain manual user checks.
+
 These are offline CPU/source checks, not live-game automation. Keep them: they
 protect fixes rather than collecting one-off investigation artifacts. Run from
 the workspace root in an x64 Visual Studio Developer Command Prompt with Python.
 
 | Check in doa1u_port/tools | Purpose |
 | --- | --- |
+| throw_move_lookup_check.c | Production 570E0 shadow: 131072 player/selector/action cases, register/stack preservation and captured DD regression; build/run target throw_move_lookup_check |
 | antialiasing_check.cpp | Production FXAA/SSAA shaders on headless D3D11 WARP, with pixel readback |
 | check_pb_submission.c | Real pushbuffer decoder: wraps, split packets, CALL/RETURN, GET timing |
 | check_head_pose_gate.py | Lifted head gate including observed downed/victory cases |
@@ -140,3 +147,22 @@ pause-call state (audio function is a stub in this test). `nri_backend_check
 <api> --present` exercises the production backend's paused UI-only loop for five
 repaints without new guest frames, then resumes; runs on all three APIs. Audible
 bank/APU/FMV pause/resume and game timing remain manual acceptance checks.
+
+### Training move-list dimming (2026-10-30)
+
+Capture `XISO/captures/training-dimming-23191-4372/training_frame1258.rdc`
+(D3D12): events 3617 (guest target) and 7336 (HUD replay) sample a stale
+texture on a full-screen black 0x90000000 rectangle. Its coordinates have a
+1/32-pixel bias; the bottom-right UV is garbage. Executor ignored texture
+CONTROL0 enable bit 30. Respect it while retaining disabled bindings; explicit
+CPU texture decoding temporarily enables its private saved texture state.
+Full-canvas untextured overlays now tolerate subpixel bias and cover the wide
+world in both original drawing and post-AA replay. Ordinary HUD sizing unchanged.
+
+- From a VS x64 developer shell: `python tools/check_texture_enable.py`
+  exercises the actual extracted texture-register decoder, all four stages,
+  disabled binding updates and re-enabling without rebinding.
+- Build `nri_backend_check`, then run `nri_backend_check <api> --dimming`
+  for `d3d11`, `d3d12`, `vulkan`. Pixel checks cover the captured alpha/UV
+  fixture in 4:3 and 16:9, direct target and post-AA replay. All pass.
+- Source-config OFF/ON checks and Release build pass. In-game user retest pending.

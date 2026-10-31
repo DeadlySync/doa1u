@@ -238,3 +238,9 @@ Thumbs.db
 !src/third_party/SDL3-vendor/SDL3-3.4.18/lib/x64/
 !src/third_party/SDL3-vendor/SDL3-3.4.18/lib/x64/SDL3.lib
 !src/third_party/SDL3-vendor/SDL3-3.4.18/lib/x64/SDL3.dll
+!/tools/training_stage_change_check.c
+!/tools/collision_trace.py
+!/tools/compare_collision_state.py
+!/tools/capture_collision.bat
+!/tools/throw_move_lookup_check.c
+!/tools/throw_attach.cdb

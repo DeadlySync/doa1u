@@ -243,7 +243,7 @@ void panel()
 				ImGui::PopStyleColor();
 		}
 
-		ImGui::SetCursorPos(ImVec2(col, 58 * ui_scale));
+		ImGui::SetCursorPos(ImVec2(14 * ui_scale, 46 * ui_scale));
 		ImGui::PushFont(ui_font, 11 * ui_scale);
 		ImGui::TextUnformatted("Menus, HUD and FMVs retain 4:3 proportions.");
 		ImGui::PopFont();

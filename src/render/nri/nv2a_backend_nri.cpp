@@ -1143,7 +1143,8 @@ namespace
                 left=std::min(left,vertex.x); top=std::min(top,vertex.y);
                 right=std::max(right,vertex.x); bottom=std::max(bottom,vertex.y);
             }
-            draw.full_canvas=left<=0 && top<=0 && right>=constants.surf_w && bottom>=constants.surf_h;
+            // Xbox raster coordinates include a 1/32-pixel bias.
+            draw.full_canvas=left<=0.5f && top<=0.5f && right>=constants.surf_w-0.5f && bottom>=constants.surf_h-0.5f;
         }
         if (image) {
             auto& copy=tail.images[{image->object,image->revision}];
@@ -1189,6 +1190,7 @@ namespace
                 float vh=std::min((float)h,w/aspect), vw=vh*aspect;
                 draw_viewport={(w-vw)*0.5f,(h-vh)*0.5f,vw,vh,0,1};
             }
+            if (draw.full_canvas) constants.layout_x=constants.layout_y=1;
             core.CmdSetViewports(*frame->commands,&draw_viewport,1);
             constants.layout_pad[0]=draw_viewport.width;
             constants.layout_pad[1]=draw_viewport.height;
@@ -1427,14 +1429,13 @@ namespace
         if(window)
 			SetWindowLongPtrW(window,GWLP_WNDPROC,(LONG_PTR)wndproc);
         else 
-			window = CreateWindowExW(0, wc.lpszClassName, L"Dead or Alive: ULTIMATE", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT,
+			window = CreateWindowExW(0, wc.lpszClassName, L"Dead or Alive 1: ULTIMATE", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT,
 		                    CW_USEDEFAULT, 660, 520, nullptr, nullptr, wc.hInstance, nullptr);
 							
 		if (!window)
 			throw std::runtime_error("Create NRI window failed");
 		
-		std::wstring title = active_api == nri::GraphicsAPI::VK ? L"DOA1U - NRI / Vulkan" : active_api == nri::GraphicsAPI::D3D12 ? L"DOA1U - NRI / D3D12" : L"DOA1U - NRI / D3D11";
-		SetWindowTextW(window, title.c_str());
+		SetWindowTextW(window, L"Dead or Alive 1: ULTIMATE");
 		graphics_window_apply(window);
 		RECT client;
 		GetClientRect(window, &client);
@@ -1662,6 +1663,20 @@ namespace
 				constants.layout_x = 1;
 		}
 		
+        // Untextured full-canvas fades/dimming cover the wide world too.
+        // Do not widen ordinary panels or textured HUD artwork.
+        if (!image && has_2d_coordinates(*batch) && !guest_depth_mode(rs) &&
+            (!rs || !rs->stencil_enable)) {
+            float left=constants.surf_w, top=constants.surf_h, right=0, bottom=0;
+            for (uint32_t i=0;i<batch->count;++i) {
+                const auto& v=batch->vertices[i];
+                left=std::min(left,v.x); top=std::min(top,v.y);
+                right=std::max(right,v.x); bottom=std::max(bottom,v.y);
+            }
+            if (left<=0.5f && top<=0.5f && right>=constants.surf_w-0.5f && bottom>=constants.surf_h-0.5f)
+                constants.layout_x=constants.layout_y=1;
+        }
+
 		unsigned z = guest_depth_mode(rs);
 		
 		if (option("RECOMP_GPU_SHOWALL") || option("RECOMP_GPU_NODEPTH"))

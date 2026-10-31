@@ -32,6 +32,8 @@ namespace
 		bool startup = false;
 		std::array<int, 48> previous {};
 		bool waitRelease = false, menuConsumed = false;
+		std::array<bool, 48> active {};
+		std::array<Uint64, 48> eventTime {};
 	};
 
 	std::vector<Pad> pads;
@@ -43,6 +45,7 @@ namespace
 	bool capturedKeys[256] {};
 	bool availability[HOST_TYPES] {};
 	bool focused = true;
+	Uint64 keyboardActivity = 0, padActivity = 0;
 	int keyboardPlayer = 0;
 
 	std::atomic<uint64_t> rumble[2] {};
@@ -283,6 +286,15 @@ extern "C" int host_input_key(int key, int down)
 		return 1;
 	}
 
+	// Gameplay ownership is P1-only. Menu navigation, repeats and host shortcuts
+	// do not count as device activity (Enter retains its ordinary Start binding).
+	if (fresh && !menu && focused && key != VK_ESCAPE && key != VK_F1)
+		for (int t = 0; t < HOST_TARGETS; ++t)
+			if (maps[0][0].value[t] == key) {
+				keyboardActivity = SDL_GetTicksNS();
+				break;
+			}
+
 	if (!menu || !fresh || key == VK_ESCAPE || key == VK_F1)
 		return 0;
 
@@ -341,12 +353,23 @@ extern "C" void host_input_update()
 
 	SDL_Event event;
 
-	while (SDL_PollEvent(&event)) {}
+	while (SDL_PollEvent(&event)) {
+		for (auto& p : pads) {
+			if (event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN && event.gbutton.which == p.id)
+				p.eventTime[event.gbutton.button] = event.gbutton.timestamp;
+			if (event.type == SDL_EVENT_GAMEPAD_AXIS_MOTION && event.gaxis.which == p.id) {
+				int i = 32 + event.gaxis.axis * 2;
+				p.eventTime[i] = p.eventTime[i + 1] = event.gaxis.timestamp;
+			}
+		}
+	}
 
 	for (auto it = pads.begin(); it != pads.end();)
 	{
 		if (!SDL_GamepadConnected(it->pad))
 		{
+			if (it->slot == 0)
+				padActivity = 0; // Replacement must not inherit the old pad's activity.
 			if (it->slot >= 0)
 				InterlockedExchange(&disconnected, 1);
 
@@ -435,6 +458,16 @@ extern "C" void host_input_update()
 				for (int t = 0; t < HOST_TARGETS; ++t)
 					fill(next[s], t, source(p.pad, maps[s][p.type].value[t]));
 
+			// Only a new mapped button/axis engagement selects the P1 pad.
+			// Hysteresis prevents drift/noise or a held stick reclaiming ownership.
+			for (int t = 0; t < HOST_TARGETS; ++t) {
+				int code = maps[s][p.type].value[t];
+				int i = code >= 200 ? 32 + code - 200 : code - 100;
+				bool engaged = now[i] > (p.active[i] ? 12000 : 20000);
+				if (s == 0 && engaged && !p.active[i] && !joined && !p.waitRelease && !menu && focused)
+					padActivity = std::max(padActivity, p.eventTime[i] ? p.eventTime[i] : SDL_GetTicksNS());
+			}
+
 			if (menu && !joined && !p.waitRelease && focused)
 			{
 				bool captured = false;
@@ -464,16 +497,22 @@ extern "C" void host_input_update()
 				}
 			}
 		}
+		for (int i = 0; i < 44; ++i)
+			p.active[i] = now[i] > (p.active[i] ? 12000 : 20000);
 		p.previous = now;
 	}
 
-	if (pads.empty() && availability[0])
+	// Keyboard always belongs to P1, independently of physical pad slots.
+	// Replace the entire gamepad state instead of merging held controls.
+	if (availability[0] || keyboardActivity)
 	{
 		present[0] = true; 
-		nextTypes[0] = 0; 
-		
-		for (int t = 0; t < HOST_TARGETS; ++t)
-			fill(next[0], t, keys[maps[0][0].value[t]] ? 32767 : 0);
+		if (nextTypes[0] < 0) nextTypes[0] = 0;
+		if (nextTypes[0] == 0 || keyboardActivity >= padActivity) {
+			memset(&next[0].Gamepad, 0, sizeof next[0].Gamepad);
+			for (int t = 0; t < HOST_TARGETS; ++t)
+				fill(next[0], t, keys[maps[0][0].value[t]] && !capturedKeys[maps[0][0].value[t]] ? 32767 : 0);
+		}
 	}
 
 	AcquireSRWLockExclusive(&lock);

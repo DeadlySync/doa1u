@@ -155,13 +155,18 @@ No manual device dropdown is currently requested.
 
 ### Input priority and menu navigation
 
-- Controllers take priority over keyboard for gameplay. When a controller is
-  identified/available, keyboard is not a gameplay input source except the host
-  shortcuts: **Esc restarts the game**, **F1 opens the launcher**. Enter is a
-  normal keyboard gameplay binding, defaulting to Xbox Start.
-  Do not merge keyboard gameplay input into a connected controller's state.
+- Keyboard and P1's assigned controller share guest port P1. A new mapped
+  keyboard press or P1 pad button/deliberate axis engagement selects that device.
+  Output replaces, never merges, the previous device's held controls. Repeats,
+  releases, held pad inputs, stick drift, menu activity and Esc/F1 do not select
+  a gameplay device. Axis activation/release uses hysteresis (20000/12000).
+  Enter remains an ordinary Start binding. P2 is controller-only; its activity
+  never changes P1 ownership. Physical slots retain join/hotplug rules while
+  keyboard controls P1. Disconnect still requests pause; keyboard keeps guest
+  P1 available, and replacement pads need new input to take over.
+  **Esc restarts the game**, **F1 opens the launcher**.
 - The launcher supports **controller, mouse and keyboard navigation**, including
-  when a controller is connected. Gameplay suppression does not disable launcher
+  when a controller is connected. Gameplay device selection does not disable launcher
   keyboard navigation. Enter activates the highlighted button unless a binding
   field is awaiting capture, in which case Enter is assigned to that field.
 - No unbound targets and no multiple bindings: each target has exactly one

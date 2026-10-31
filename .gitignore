@@ -234,10 +234,9 @@ Thumbs.db
 !/tools/compile_nri_spirv.py
 !/tools/launcher_check.cpp
 
-# Pinned SDL3 redistributable/import library (required for offline builds).
-!src/third_party/SDL3-vendor/SDL3-3.4.18/lib/x64/
-!src/third_party/SDL3-vendor/SDL3-3.4.18/lib/x64/SDL3.lib
-!src/third_party/SDL3-vendor/SDL3-3.4.18/lib/x64/SDL3.dll
+# Preserve the complete pinned upstream SDL source distribution, including its
+# platform project files and assets normally excluded by generic ignore rules.
+!src/third_party/SDL3/**
 !/tools/training_stage_change_check.c
 !/tools/collision_trace.py
 !/tools/compare_collision_state.py

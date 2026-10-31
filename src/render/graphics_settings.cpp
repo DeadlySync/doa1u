@@ -9,7 +9,7 @@
 #include <vector>
 #include <algorithm>
 #include <cwchar>
-#include "frontend/host_input.h"
+#include "controller/host_input.h"
 #include "frontend/launcher_art.h"
 #include "render/graphics_settings.h"
 #include "third_party/imgui/imgui.h"
@@ -35,6 +35,7 @@ namespace
 	struct Preferences
 	{
 		int aspect = 0, window43 = 0, window169 = 0, render43 = 0, render169 = 0;
+		bool borderless = false, fullscreen = false;
 		bool sharp2d = true, snn2d = false; // dormant experiments
         bool lanczos2d = true;
         int lanczos_ar = 80;
@@ -46,7 +47,7 @@ namespace
 			return lanczos2d != o.lanczos2d || lanczos_ar != o.lanczos_ar || snn2d != o.snn2d || sharp2d != o.sharp2d || aspect != o.aspect || window43 != o.window43 || window169 != o.window169
 				   || render43 != o.render43 || render169 != o.render169 || backend != o.backend
 				   || filtering != o.filtering || anisotropy != o.anisotropy || aa != o.aa || ssaa != o.ssaa
-				   || msaa != o.msaa || monitor != o.monitor;
+				   || msaa != o.msaa || monitor != o.monitor || borderless != o.borderless || fullscreen != o.fullscreen;
 		}
 	} prefs;
 	
@@ -162,11 +163,11 @@ namespace
 							 "; DOA1U host graphics preferences. Aspect, window and NRI resolution/filtering are active.\r\n"
 							 "; NRI SSAA/MSAA/FXAA/SMAA are active. OS selects GPU. Backend applies on restart.\r\n"
 							 "; Resolution values below are preset indices, independently per aspect.\r\n"
-							 "[Graphics]\r\nVersion=1\r\nAspectRatio=%d\r\n"
+							 "[Graphics]\r\nVersion=1\r\nBorderless=%d\r\nFullScreen=%d\r\nAspectRatio=%d\r\n"
 							 "Window43=%d\r\nWindow169=%d\r\nRender43=%d\r\nRender169=%d\r\n"
 							 "Monitor=%s\r\nBackend=%d\r\nFiltering=%d\r\nAnisotropy=%d\r\n"
 							 "Lanczos2D=%d\r\nLANCZOS2_AR_STRENGTH=%d\r\nSharp2D=%d\r\nSNN2D=%d\r\nAntiAliasing=%d\r\nSSAA=%d\r\nMSAA=%d\r\n",
-							 prefs.aspect, 
+							 prefs.borderless ? 1 : 0, prefs.fullscreen ? 1 : 0, prefs.aspect,
 							 prefs.window43, 
 							 prefs.window169, 
 							 prefs.render43, 
@@ -271,6 +272,7 @@ namespace
 		auto adjust = (AdjustForDpi)GetProcAddress(user, "AdjustWindowRectExForDpi");
 		auto dpi = (WindowDpi)GetProcAddress(user, "GetDpiForWindow");
 		DWORD style = (DWORD)GetWindowLongPtrW(hwnd, GWL_STYLE);
+		style = (style & ~(WS_OVERLAPPEDWINDOW | WS_POPUP)) | (prefs.borderless ? WS_POPUP : WS_OVERLAPPEDWINDOW);
 		DWORD ex = (DWORD)GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
 		
 		if (adjust && dpi)
@@ -363,6 +365,8 @@ extern "C" void graphics_settings_init(void)
 	
 	prefs.aspect = read_int(L"AspectRatio", 0, 1);
 	prefs.window43 = read_int(L"Window43", 0, 4);
+	prefs.borderless = read_int(L"Borderless", 0, 1) != 0;
+	prefs.fullscreen = read_int(L"FullScreen", 0, 1) != 0;
 	prefs.window169 = read_int(L"Window169", 0, 5);
 	prefs.render43 = read_int(L"Render43", 0, 10);
 	prefs.render169 = read_int(L"Render169", 0, 5);
@@ -457,14 +461,38 @@ extern "C" void graphics_window_apply(void *window)
 	static int applied_aspect = -1, applied_index = -1;
 	static std::string applied_monitor;
 	static HWND applied_window = nullptr;
+	static bool applied_borderless = false, applied_fullscreen = false;
+	static RECT windowed_position = {};
 	const int index = prefs.aspect ? prefs.window169 : prefs.window43;
 	
-	if (applied_window == hwnd && applied_aspect == prefs.aspect && applied_index == index && applied_monitor == prefs.monitor)
+	if (applied_window == hwnd && applied_aspect == prefs.aspect && applied_index == index && applied_monitor == prefs.monitor && applied_borderless == prefs.borderless && applied_fullscreen == prefs.fullscreen)
 		return;
 
 	MONITORINFO info = {sizeof info};
 	if (!GetMonitorInfoW(selected_monitor(), &info))
 		return;
+
+	RECT prior = {};
+	GetWindowRect(hwnd, &prior);
+	if (applied_window != hwnd || !applied_fullscreen)
+		windowed_position = prior;
+	if (IsZoomed(hwnd)) ShowWindow(hwnd, SW_RESTORE);
+	LONG_PTR style = GetWindowLongPtrW(hwnd, GWL_STYLE);
+	style &= ~(LONG_PTR)(WS_OVERLAPPEDWINDOW | WS_POPUP);
+	style |= prefs.borderless ? WS_POPUP : WS_OVERLAPPEDWINDOW;
+	SetWindowLongPtrW(hwnd, GWL_STYLE, style);
+	auto remember = [&] {
+		applied_window = hwnd; applied_aspect = prefs.aspect; applied_index = index;
+		applied_monitor = prefs.monitor;
+		applied_borderless = prefs.borderless; applied_fullscreen = prefs.fullscreen;
+	};
+	if (prefs.fullscreen) {
+		// Desktop-sized presentation only: never request an exclusive display mode.
+		const RECT& area = prefs.borderless ? info.rcMonitor : info.rcWork;
+		if (SetWindowPos(hwnd, nullptr, area.left, area.top, area.right-area.left, area.bottom-area.top,
+			SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED)) remember();
+		return;
+	}
 	
 	const Size *sizes = prefs.aspect ? sizes169 : sizes43;
 	int usable = index;
@@ -495,6 +523,7 @@ extern "C" void graphics_window_apply(void *window)
 	RECT position;
 	if (!GetWindowRect(hwnd, &position))
 		return;
+	if (applied_window == hwnd && applied_fullscreen) position = windowed_position;
 	
 	int x = position.left, y = position.top;
 	if (x + width > info.rcWork.right) 
@@ -512,12 +541,9 @@ extern "C" void graphics_window_apply(void *window)
 	if (IsZoomed(hwnd))
 		ShowWindow(hwnd, SW_RESTORE);
 	
-	if (SetWindowPos(hwnd, nullptr, x, y, width, height, SWP_NOZORDER | SWP_NOACTIVATE))
+	if (SetWindowPos(hwnd, nullptr, x, y, width, height, SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED))
 	{
-		applied_window = hwnd;
-		applied_aspect = prefs.aspect;
-		applied_index = index;
-		applied_monitor=prefs.monitor;
+		remember();
 	}
 }
 

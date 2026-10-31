@@ -1,5 +1,11 @@
 # Retained regression checks
 
+2026-10-31 launcher_check additionally covers Window Type INI persistence,
+independent Borderless/Windowed/Full Screen controls, all four actual hidden
+HWND style/geometry combinations, windowed preset restoration, unchanged
+desktop resolution/refresh and internal-resolution preferences, and Display
+content ScrollMax.y=0 at720p. No live game test is implied.
+
 2026-10-31 launcher_check now verifies P1 last-active keyboard/pad selection
 with connected pads: whole-state replacement, held inputs/repeats/host shortcuts,
 P2 isolation, axis drift/hysteresis, menu/focus suppression, disconnect keyboard
@@ -166,3 +172,17 @@ world in both original drawing and post-AA replay. Ordinary HUD sizing unchanged
   for `d3d11`, `d3d12`, `vulkan`. Pixel checks cover the captured alpha/UV
   fixture in 4:3 and 16:9, direct target and post-AA replay. All pass.
 - Source-config OFF/ON checks and Release build pass. In-game user retest pending.
+
+### F1 launcher controller navigation (2026-10-31)
+
+launcher_check attaches a virtual P1 SDL controller after game-window handoff and F1 opening. D-pad Down and South navigate to and activate Graphics; guest gameplay stays neutral. This reproduced the missing HasGamepad flag before the fix: Win32 NewFrame overwrote SDL navigation with independent XInput polling. IMGUI_IMPL_WIN32_DISABLE_GAMEPAD makes SDL the sole menu controller source, preserving slot routing and capture/release suppression. Hidden regression passes; physical-controller retest pending.
+
+F1 panel-focus regression: controller activation of Display, Graphics or Controls transfers focus to its first control; Left returns to the sidebar. Synthetic controller navigation reaches a P1 binding and captures a replacement keyboard key. Passed 2026-10-31.
+
+### Embedded SDL3 controller build (2026-10-31)
+
+Adapter moved to src/controller. Pinned unmodified SDL 3.4.18 upstream source is statically built using cmake/ControllerSDL.cmake; unused multimedia subsystems and SDL test library disabled, HID/XInput/virtual joysticks retained. launcher_check passes with old SDL3 DLLs removed from build and XISO directories. Import table confirms no SDL3.dll dependency. Source configuration checks pass for diagnostics OFF/ON. Archive-byte verification: all 2183 upstream files identical. Physical USB/Bluetooth/rumble retest remains with the user.
+
+### Controllers branch completion - 0.9.0 (2026-10-31)
+
+User confirmed all tested controllers are working after the static SDL integration and F1 panel-navigation fixes. Release version is 0.9.0, shared by VERSIONINFO and startup/NRI/legacy window titles. This closes the controllers implementation milestone; no Git identifier or auto-increment counter is embedded.

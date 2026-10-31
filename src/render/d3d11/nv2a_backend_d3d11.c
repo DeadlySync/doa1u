@@ -2,6 +2,7 @@
 
 #define COBJMACROS
 #include <windows.h>
+#include "app_version.h"
 #include <d3d11.h>
 #include <dxgi.h>
 #include <d3dcompiler.h>
@@ -316,15 +317,18 @@ static int ensure_device(const Nv2aSurface *s)
 	}
 
     /* window */
-    WNDCLASSA wc; 
+    WNDCLASSEXA wc;
 	memset(&wc, 0, sizeof wc);
+	wc.cbSize = sizeof wc;
 	
     wc.lpfnWndProc = wndproc;
     wc.hInstance = GetModuleHandleA(NULL);
+    wc.hIcon = (HICON)LoadImageA(wc.hInstance, MAKEINTRESOURCEA(1), IMAGE_ICON, GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON), LR_SHARED);
+    wc.hIconSm = (HICON)LoadImageA(wc.hInstance, MAKEINTRESOURCEA(1), IMAGE_ICON, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_SHARED);
     wc.hCursor = LoadCursorA(NULL, (LPCSTR)IDC_ARROW);
     wc.lpszClassName = "XboxRecompD3D11";
 	
-    RegisterClassA(&wc);
+    RegisterClassExA(&wc);
 	
     RECT r = { 0, 0, (LONG)s_bb_w, (LONG)s_bb_h };
     AdjustWindowRect(&r, WS_OVERLAPPEDWINDOW, FALSE);
@@ -333,7 +337,7 @@ static int ensure_device(const Nv2aSurface *s)
     if(s_hwnd)
         SetWindowLongPtrW(s_hwnd,GWLP_WNDPROC,(LONG_PTR)wndproc);
     else 
-        s_hwnd = CreateWindowExA(0, "XboxRecompD3D11", "Dead or Alive 1: ULTIMATE",
+        s_hwnd = CreateWindowExA(0, "XboxRecompD3D11", DOA1U_WINDOW_TITLE,
                              WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT,
                              r.right - r.left, r.bottom - r.top,
                              NULL, NULL, wc.hInstance, NULL);

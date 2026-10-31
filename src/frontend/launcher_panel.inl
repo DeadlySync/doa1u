@@ -49,7 +49,7 @@ void nav_icon(int icon, ImVec2 min)
 	}
 }
 
-void controls_page()
+void controls_page(bool focus_content)
 {
 	const char* types[] = { "Keyboard", "PS4", "PS5", "Switch Pro", "Xbox" };
 	for (int t = 0; t < HOST_TYPES; ++t)
@@ -62,6 +62,7 @@ void controls_page()
 		if (t == device_type)
 			ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(.32f, .24f, .40f, 1));
 
+		if (focus_content && t == 0) ImGui::SetKeyboardFocusHere();
 		if (ImGui::Button(types[t]))
 		{
 			device_type = t;
@@ -182,6 +183,7 @@ void panel()
 	ImGui::BeginChild("Navigation", ImVec2(navW, bottom - navY - 15 * ui_scale), ImGuiChildFlags_Borders | ImGuiChildFlags_NavFlattened);
 
 	const char* pages[] = { "Display", "Graphics", "Controls" };
+	bool focus_content = false;
 	for (int i = 0; i < 3; ++i)
 	{
 		bool selected = i == page;
@@ -192,6 +194,7 @@ void panel()
 		if (ImGui::Button(pages[i], ImVec2(-1, 58 * ui_scale)))
 		{
 			page = i;
+			focus_content = !ImGui::IsMouseClicked(0);
 			host_capture_cancel();
 		}
 
@@ -211,16 +214,40 @@ void panel()
 	ImGui::PopFont();
 	ImGui::TextDisabled("%s", page == 0 ? "Window, monitor and presentation." : page == 1 ? "Rendering quality and texture filtering." : "Assign and customize each player's controls.");
 	ImGui::Separator();
-	ImGui::Spacing();
+	if (page == 0)
+		ImGui::SetCursorPosY(ImGui::GetCursorPosY() - 10 * ui_scale);
+	else
+		ImGui::Spacing();
 
 	if (page == 0)
 	{
 		ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(.10f, .10f, .11f, .70f));
-		ImGui::BeginChild("Aspect row", ImVec2(0, 78 * ui_scale), ImGuiChildFlags_Borders | ImGuiChildFlags_NavFlattened);
-		ImGui::SetCursorPos(ImVec2(14 * ui_scale, 20 * ui_scale));
+		ImGui::BeginChild("Window type row", ImVec2(0, 64 * ui_scale), ImGuiChildFlags_Borders | ImGuiChildFlags_NavFlattened);
+		float col = ImGui::GetWindowWidth() * .51f;
+		ImGui::SetCursorPos(ImVec2(14 * ui_scale, 16 * ui_scale));
+		ImGui::AlignTextToFramePadding();
+		ImGui::TextUnformatted("Window Type");
+		// Keep the label and checkbox together beside the mode buttons.
+		ImGui::SameLine(col - 140 * ui_scale);
+		ImGui::AlignTextToFramePadding();
+		ImGui::TextUnformatted("Borderless");
+		ImGui::SameLine();
+		if (focus_content) ImGui::SetKeyboardFocusHere();
+		ImGui::Checkbox("##Borderless", &prefs.borderless);
+		ImGui::SetCursorPos(ImVec2(col, 12 * ui_scale));
+		for (int mode = 0; mode < 2; ++mode) {
+			if (mode) ImGui::SameLine(0, 8 * ui_scale);
+			bool selected = prefs.fullscreen == (mode != 0);
+			if (selected) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(.32f, .24f, .40f, 1));
+			if (ImGui::Button(mode ? "Full Screen" : "Windowed", ImVec2((ImGui::GetWindowWidth() - col - 20 * ui_scale) * .5f, 39 * ui_scale)))
+				prefs.fullscreen = mode != 0;
+			if (selected) ImGui::PopStyleColor();
+		}
+		ImGui::EndChild();
+		ImGui::BeginChild("Aspect row", ImVec2(0, 66 * ui_scale), ImGuiChildFlags_Borders | ImGuiChildFlags_NavFlattened);
+		ImGui::SetCursorPos(ImVec2(14 * ui_scale, 12 * ui_scale));
 		ImGui::TextUnformatted("Aspect Ratio");
 
-		float col = ImGui::GetWindowWidth() * .51f;
 		ImGui::SetCursorPos(ImVec2(col, 10 * ui_scale));
 
 		for (int a = 0; a < 2; ++a)
@@ -243,16 +270,17 @@ void panel()
 				ImGui::PopStyleColor();
 		}
 
-		ImGui::SetCursorPos(ImVec2(14 * ui_scale, 46 * ui_scale));
+		ImGui::SetCursorPos(ImVec2(14 * ui_scale, 38 * ui_scale));
 		ImGui::PushFont(ui_font, 11 * ui_scale);
 		ImGui::TextUnformatted("Menus, HUD and FMVs retain 4:3 proportions.");
 		ImGui::PopFont();
 		ImGui::EndChild();
 
-		ImGui::BeginChild("Size row", ImVec2(0, 60 * ui_scale), ImGuiChildFlags_Borders | ImGuiChildFlags_NavFlattened);
-		ImGui::SetCursorPos(ImVec2(14 * ui_scale, 19 * ui_scale));
+		ImGui::BeginChild("Size row", ImVec2(0, 44 * ui_scale), ImGuiChildFlags_Borders | ImGuiChildFlags_NavFlattened);
+		ImGui::SetCursorPos(ImVec2(14 * ui_scale, 12 * ui_scale));
 		ImGui::TextUnformatted("Window size");
-		ImGui::SetCursorPos(ImVec2(col, 14 * ui_scale));
+		ImGui::SetCursorPos(ImVec2(col, 7 * ui_scale));
+		ImGui::BeginDisabled(prefs.fullscreen);
 		ImGui::SetNextItemWidth(-12 * ui_scale);
 
 		const Size* sizes = prefs.aspect ? sizes169 : sizes43;
@@ -276,12 +304,13 @@ void panel()
 			}
 			ImGui::EndCombo();
 		}
+		ImGui::EndDisabled();
 		ImGui::EndChild();
 
-        ImGui::BeginChild("Internal resolution row", ImVec2(0, 60 * ui_scale), ImGuiChildFlags_Borders | ImGuiChildFlags_NavFlattened);
-        ImGui::SetCursorPos(ImVec2(14 * ui_scale, 19 * ui_scale));
+        ImGui::BeginChild("Internal resolution row", ImVec2(0, 44 * ui_scale), ImGuiChildFlags_Borders | ImGuiChildFlags_NavFlattened);
+        ImGui::SetCursorPos(ImVec2(14 * ui_scale, 12 * ui_scale));
         ImGui::TextUnformatted("Internal Resolution");
-        ImGui::SetCursorPos(ImVec2(col, 14 * ui_scale));
+        ImGui::SetCursorPos(ImVec2(col, 7 * ui_scale));
         ImGui::SetNextItemWidth(-12 * ui_scale);
         int& render_index = prefs.aspect ? prefs.render169 : prefs.render43;
         snprintf(size_label, sizeof size_label, "%d x %d", sizes[render_index].w, sizes[render_index].h);
@@ -297,10 +326,10 @@ void panel()
         }
         ImGui::EndChild();
 
-		ImGui::BeginChild("Monitor row", ImVec2(0, 60 * ui_scale), ImGuiChildFlags_Borders | ImGuiChildFlags_NavFlattened);
-		ImGui::SetCursorPos(ImVec2(14 * ui_scale, 19 * ui_scale));
+		ImGui::BeginChild("Monitor row", ImVec2(0, 44 * ui_scale), ImGuiChildFlags_Borders | ImGuiChildFlags_NavFlattened);
+		ImGui::SetCursorPos(ImVec2(14 * ui_scale, 12 * ui_scale));
 		ImGui::TextUnformatted("Monitor");
-		ImGui::SetCursorPos(ImVec2(col, 14 * ui_scale));
+		ImGui::SetCursorPos(ImVec2(col, 7 * ui_scale));
 		ImGui::SetNextItemWidth(-12 * ui_scale);
 		std::string current = "Primary monitor";
 
@@ -337,6 +366,7 @@ void panel()
             if (backend) ImGui::SameLine();
             const bool selected = prefs.backend == backend;
             if (selected) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(.32f, .24f, .40f, 1));
+            if (focus_content && backend == 0) ImGui::SetKeyboardFocusHere();
             if (ImGui::Button(backends[backend], ImVec2(backend_width, 0)) && !selected)
             {
                 prefs.backend = backend;
@@ -380,7 +410,7 @@ void panel()
 		}
 	}
 	else
-		controls_page();
+		controls_page(focus_content);
 
 	ImGui::EndChild();
 	ImGui::PopStyleColor();

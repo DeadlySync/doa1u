@@ -1,5 +1,6 @@
 /* First-run UI executes before any guest initialization, in the eventual game HWND. */
 #include <windows.h>
+#include "app_version.h"
 #include <d3d11.h>
 #include "render/graphics_settings.h"
 namespace
@@ -40,17 +41,20 @@ namespace
 			SetEvent(completed);
 		};
 
-		WNDCLASSW wc = {};
+		WNDCLASSEXW wc = {};
+		wc.cbSize = sizeof(wc);
 		wc.lpfnWndProc = proc;
 		wc.hInstance = GetModuleHandleW(nullptr);
+		wc.hIcon = (HICON)LoadImageW(wc.hInstance, MAKEINTRESOURCEW(1), IMAGE_ICON, GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON), LR_SHARED);
+		wc.hIconSm = (HICON)LoadImageW(wc.hInstance, MAKEINTRESOURCEW(1), IMAGE_ICON, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_SHARED);
 		wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
 		wc.lpszClassName = L"DOA1ULauncher";
-		RegisterClassW(&wc);
+		RegisterClassExW(&wc);
 
 		RECT r = { 0,0,1280,720 };
 		AdjustWindowRect(&r, WS_OVERLAPPEDWINDOW, FALSE);
 
-		HWND w = CreateWindowW(wc.lpszClassName, L"Dead or Alive 1: ULTIMATE", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, r.right - r.left, r.bottom - r.top, nullptr, nullptr, wc.hInstance, nullptr);
+		HWND w = CreateWindowW(wc.lpszClassName, DOA1U_WINDOW_TITLE_W, WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, r.right - r.left, r.bottom - r.top, nullptr, nullptr, wc.hInstance, nullptr);
 		if (!w)
 		{
 			finish(0); return 0;

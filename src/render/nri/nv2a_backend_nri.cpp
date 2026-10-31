@@ -6,6 +6,7 @@
 #include "Extensions/NRIDeviceCreation.h"
 #include "Extensions/NRISwapChain.h"
 #include <windows.h>
+#include "app_version.h"
 #undef ERROR // Win32 macro conflicts with nri::Message::ERROR.
 #include "nri_imgui.h"
 #include "nri_shaders.h"
@@ -1418,24 +1419,27 @@ namespace
 		check(core.GetQueue(*device, nri::QueueType::GRAPHICS, 0, queue), "Get graphics queue");
 		
 
-		WNDCLASSW wc = {};
+		WNDCLASSEXW wc = {};
+		wc.cbSize = sizeof(wc);
 		wc.lpfnWndProc = wndproc;
 		wc.hInstance = GetModuleHandleW(nullptr);
+		wc.hIcon = (HICON)LoadImageW(wc.hInstance, MAKEINTRESOURCEW(1), IMAGE_ICON, GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON), LR_SHARED);
+		wc.hIconSm = (HICON)LoadImageW(wc.hInstance, MAKEINTRESOURCEW(1), IMAGE_ICON, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_SHARED);
 		wc.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));
 		wc.lpszClassName = L"DOA1UNRI";
-		RegisterClassW(&wc);
+		RegisterClassExW(&wc);
 		
 		window = (HWND)graphics_take_startup_window();
         if(window)
 			SetWindowLongPtrW(window,GWLP_WNDPROC,(LONG_PTR)wndproc);
         else 
-			window = CreateWindowExW(0, wc.lpszClassName, L"Dead or Alive 1: ULTIMATE", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT,
+			window = CreateWindowExW(0, wc.lpszClassName, DOA1U_WINDOW_TITLE_W, WS_OVERLAPPEDWINDOW, CW_USEDEFAULT,
 		                    CW_USEDEFAULT, 660, 520, nullptr, nullptr, wc.hInstance, nullptr);
 							
 		if (!window)
 			throw std::runtime_error("Create NRI window failed");
 		
-		SetWindowTextW(window, L"Dead or Alive 1: ULTIMATE");
+		SetWindowTextW(window, DOA1U_WINDOW_TITLE_W);
 		graphics_window_apply(window);
 		RECT client;
 		GetClientRect(window, &client);

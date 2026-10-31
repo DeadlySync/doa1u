@@ -1,5 +1,21 @@
 # DOA1U launcher proposal
 
+## Window Type delivered - 2026-10-31
+
+Display now starts with Window Type: Borderless label to the left of its
+checkbox, independent Windowed / Full Screen selected-state buttons. Window
+size/Internal Resolution/Monitor rows reduced to44px; aspect row66px and
+window-type64px fit the720p page without scrolling. Full Screen is desktop
+presentation, never exclusive mode: bordered fills selected monitor work area
+like a maximized window; borderless fills its entire monitor rectangle.
+Windowed restores selected size and previous placement (clamped to monitor).
+Window Size disabled in Full Screen; Internal Resolution stays independent.
+Settings persist as Borderless/FullScreen (0/1), default0 for existing INIs.
+First-run stays fixed launcher until Play; gameplay/F1 changes apply live.
+Supersedes older rejection of window-mode controls below. Hidden suite and
+visual layout check PASS; actual game transitions await user testing.
+
+
 Status: implemented, pending manual in-game/device acceptance testing.
 
 ## Implementation handoff — 2026-10-30
@@ -21,7 +37,7 @@ blindly resumed. Original-game pause eligibility is retained, not replaced with
 a host simulation freeze. Runtime backend choices remain deferred until restart.
 
 Monitor device names persist independently of OS-controlled GPU selection.
-SDL3 3.4.18 is pinned/vendored; distribute `SDL3.dll` beside the executable.
+SDL3 3.4.18 is pinned as unmodified upstream source and statically linked with controller-focused options. No SDL3 DLL is needed. See src/controller/README.md and src/third_party/SDL3/README.md.
 The port-owned runtime override now routes both guest controller handles to
 distinct host slots rather than hardcoding every guest read to port zero.
 

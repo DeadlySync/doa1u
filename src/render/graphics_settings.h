@@ -8,6 +8,21 @@ extern "C" {
 
 /* Initialize before guest threads start. Aspect ratio and window size are live. */
 void graphics_settings_init(void);
+int graphics_launcher_needed(void);
+int graphics_launcher_run(void);
+void graphics_game_started(void);
+void *graphics_take_startup_window(void);
+void graphics_set_startup_window(void *window);
+/* The retained startup HWND has a dedicated owner. Queue input for the GPU
+ * thread; never touch ImGui or renderer state from the HWND owner thread. */
+int graphics_window_defer_message(void *window, unsigned message, uintptr_t wparam, intptr_t lparam);
+void graphics_window_dispatch_pending(void);
+int graphics_menu_visible(void);
+int graphics_game_paused(void);
+void graphics_wait_for_game(void);
+/* Requests consumed only by the existing guest-context match pause handler. */
+int graphics_pause_request(int paused);
+void graphics_pause_result(int before, int after);
 int graphics_widescreen(void);
 
 /* Read on the renderer/UI thread, between frames. Filtering: 0 nearest,

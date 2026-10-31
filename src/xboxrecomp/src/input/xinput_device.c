@@ -56,168 +56,26 @@ static void keyboard_merge(XBOX_INPUT_STATE *pState)
 #include <xinput.h>
 #pragma comment(lib, "xinput.lib")
 
-static BOOL  g_controller_connected[XBOX_MAX_CONTROLLERS] = { FALSE };
-static DWORD g_last_packet[XBOX_MAX_CONTROLLERS] = { 0 };
-
-/* Device discovery can block inside the Windows driver. Keep it off the
- * guest/render thread: connected pads sampled at 60 Hz, empty slots at 1 Hz.
- * Only the tiny snapshot copy holds the lock, never an XInput call. */
-static INIT_ONCE s_pad_once = INIT_ONCE_STATIC_INIT;
-static SRWLOCK s_pad_lock = SRWLOCK_INIT;
-static XINPUT_STATE s_pad_state[XBOX_MAX_CONTROLLERS];
-static DWORD s_pad_result[XBOX_MAX_CONTROLLERS] = {
-    ERROR_DEVICE_NOT_CONNECTED, ERROR_DEVICE_NOT_CONNECTED,
-    ERROR_DEVICE_NOT_CONNECTED, ERROR_DEVICE_NOT_CONNECTED
-};
-static DWORD WINAPI input_sample_thread(LPVOID unused)
-{
-    ULONGLONG retry[XBOX_MAX_CONTROLLERS] = {0};
-    LARGE_INTEGER frequency, next;
-    HANDLE timer = CreateWaitableTimerExW(NULL, NULL, 0x2, TIMER_ALL_ACCESS);
-    if (!timer) timer = CreateWaitableTimerW(NULL, FALSE, NULL);
-    QueryPerformanceFrequency(&frequency);
-    QueryPerformanceCounter(&next);
-    (void)unused;
-    for (;;) {
-        ULONGLONG ms = GetTickCount64();
-        for (DWORD port = 0; port < XBOX_MAX_CONTROLLERS; ++port) {
-            if (ms < retry[port]) continue;
-            XINPUT_STATE state = {0};
-            DWORD result = XInputGetState(port, &state);
-            AcquireSRWLockExclusive(&s_pad_lock);
-            s_pad_state[port] = state;
-            s_pad_result[port] = result;
-            ReleaseSRWLockExclusive(&s_pad_lock);
-            retry[port] = result == ERROR_SUCCESS ? 0 : GetTickCount64() + 1000;
-        }
-        LARGE_INTEGER now, due;
-        next.QuadPart += frequency.QuadPart / 60;
-        QueryPerformanceCounter(&now);
-        if (next.QuadPart < now.QuadPart) next.QuadPart = now.QuadPart + frequency.QuadPart / 60;
-        due.QuadPart = -(next.QuadPart - now.QuadPart) * 10000000 / frequency.QuadPart;
-        if (timer && SetWaitableTimer(timer, &due, 0, NULL, NULL, FALSE))
-            WaitForSingleObject(timer, INFINITE);
-        else Sleep(16);
-    }
+/* Port-owned SDL3 adapter. Discovery/pumping runs on the window thread;
+ * all guest callers consume snapshots without invoking device drivers. */
+extern void host_input_init(void);
+extern int host_input_read(unsigned,void *);
+extern int host_input_connected(int);
+extern int host_input_rumble(unsigned,unsigned,unsigned);
+void xbox_InputInit(void) { /* Initialized by host before guest startup. */ }
+DWORD xbox_InputGetState(DWORD port,XBOX_INPUT_STATE *state) {
+    if(!state)return ERROR_DEVICE_NOT_CONNECTED;
+    memset(state,0,sizeof *state);
+    return host_input_read(port,state)?ERROR_SUCCESS:ERROR_DEVICE_NOT_CONNECTED;
 }
-static BOOL CALLBACK input_sample_start(PINIT_ONCE once, PVOID parameter, PVOID *context)
-{
-    HANDLE thread = CreateThread(NULL, 0, input_sample_thread, NULL, 0, NULL);
-    (void)once; (void)parameter; (void)context;
-    if (!thread) return FALSE;
-    CloseHandle(thread);
-    return TRUE;
+DWORD xbox_InputSetState(DWORD port,const XBOX_VIBRATION *v) {
+    if(!v||!host_input_connected(port))return ERROR_DEVICE_NOT_CONNECTED;
+    host_input_rumble(port,v->wLeftMotorSpeed,v->wRightMotorSpeed);return ERROR_SUCCESS;
 }
-
-/* The keyboard on port 0 (RECOMP_KEYBOARD=1) comes from keyboard.c, shared
- * with the SDL backend; the GDI window in fb_present.c records the keys. */
-
-void xbox_InputInit(void)
-{
-    InitOnceExecuteOnce(&s_pad_once, input_sample_start, NULL, NULL);
-}
-
-DWORD xbox_InputGetState(DWORD dwPort, XBOX_INPUT_STATE *pState)
-{
-    XINPUT_STATE xi_state;
-    DWORD result;
-
-    if (dwPort >= XBOX_MAX_CONTROLLERS || !pState)
-        return ERROR_DEVICE_NOT_CONNECTED;
-
-    xbox_InputInit();
-    AcquireSRWLockShared(&s_pad_lock);
-    result = s_pad_result[dwPort];
-    xi_state = s_pad_state[dwPort];
-    ReleaseSRWLockShared(&s_pad_lock);
-    if (result != ERROR_SUCCESS) {
-        g_controller_connected[dwPort] = FALSE;
-        if (dwPort == 0) {
-            /* Keyboard and mouse stand in for an absent pad, so the game is
-             * playable with no controller plugged in. */
-            int kb;
-            memset(pState, 0, sizeof *pState);
-            kb = xbox_InputKeyboardPoll(pState);
-            if (mkb_merge(dwPort, pState))
-                g_controller_connected[dwPort] = TRUE;
-            if (kb || mkb_enabled())
-                return ERROR_SUCCESS;
-        }
-        return result;
-    }
-
-    g_controller_connected[dwPort] = TRUE;
-    g_last_packet[dwPort] = xi_state.dwPacketNumber;
-
-    memset(pState, 0, sizeof(XBOX_INPUT_STATE));
-    pState->dwPacketNumber = xi_state.dwPacketNumber;
-    pState->Gamepad.wButtons = xi_state.Gamepad.wButtons & 0x00FF;
-
-    pState->Gamepad.bAnalogButtons[XBOX_BUTTON_A] =
-        (xi_state.Gamepad.wButtons & XINPUT_GAMEPAD_A) ? 255 : 0;
-    pState->Gamepad.bAnalogButtons[XBOX_BUTTON_B] =
-        (xi_state.Gamepad.wButtons & XINPUT_GAMEPAD_B) ? 255 : 0;
-    pState->Gamepad.bAnalogButtons[XBOX_BUTTON_X] =
-        (xi_state.Gamepad.wButtons & XINPUT_GAMEPAD_X) ? 255 : 0;
-    pState->Gamepad.bAnalogButtons[XBOX_BUTTON_Y] =
-        (xi_state.Gamepad.wButtons & XINPUT_GAMEPAD_Y) ? 255 : 0;
-    pState->Gamepad.bAnalogButtons[XBOX_BUTTON_BLACK] =
-        (xi_state.Gamepad.wButtons & XINPUT_GAMEPAD_LEFT_SHOULDER) ? 255 : 0;
-    pState->Gamepad.bAnalogButtons[XBOX_BUTTON_WHITE] =
-        (xi_state.Gamepad.wButtons & XINPUT_GAMEPAD_RIGHT_SHOULDER) ? 255 : 0;
-    pState->Gamepad.bAnalogButtons[XBOX_BUTTON_LTRIGGER] = xi_state.Gamepad.bLeftTrigger;
-    pState->Gamepad.bAnalogButtons[XBOX_BUTTON_RTRIGGER] = xi_state.Gamepad.bRightTrigger;
-
-    pState->Gamepad.sThumbLX = xi_state.Gamepad.sThumbLX;
-    pState->Gamepad.sThumbLY = xi_state.Gamepad.sThumbLY;
-    pState->Gamepad.sThumbRX = xi_state.Gamepad.sThumbRX;
-    pState->Gamepad.sThumbRY = xi_state.Gamepad.sThumbRY;
-
-    if (dwPort == 0)
-        keyboard_merge(pState);
-
-    /* Mouse+keyboard merges on top of a real pad too: the mouse owns the
-     * aim stick while it is moving, WASD owns movement while held. */
-    if (dwPort == 0)
-        mkb_merge(dwPort, pState);
-
-    return ERROR_SUCCESS;
-}
-
-DWORD xbox_InputSetState(DWORD dwPort, const XBOX_VIBRATION *pVibration)
-{
-    XINPUT_VIBRATION xi_vib;
-
-    if (dwPort >= XBOX_MAX_CONTROLLERS || !pVibration)
-        return ERROR_DEVICE_NOT_CONNECTED;
-
-    xi_vib.wLeftMotorSpeed = pVibration->wLeftMotorSpeed;
-    xi_vib.wRightMotorSpeed = pVibration->wRightMotorSpeed;
-    return XInputSetState(dwPort, &xi_vib);
-}
-
-BOOL xbox_InputIsConnected(DWORD dwPort)
-{
-    if (dwPort >= XBOX_MAX_CONTROLLERS) return FALSE;
-    return g_controller_connected[dwPort];
-}
-
-DWORD xbox_InputGetCapabilities(DWORD dwPort, DWORD dwFlags, XBOX_INPUT_CAPABILITIES *pCaps)
-{
-    XINPUT_CAPABILITIES xi_caps;
-    DWORD result;
-
-    if (dwPort >= XBOX_MAX_CONTROLLERS || !pCaps)
-        return ERROR_DEVICE_NOT_CONNECTED;
-
-    result = XInputGetCapabilities(dwPort, dwFlags, &xi_caps);
-    if (result != ERROR_SUCCESS) return result;
-
-    memset(pCaps, 0, sizeof(XBOX_INPUT_CAPABILITIES));
-    pCaps->Type = xi_caps.Type;
-    pCaps->SubType = xi_caps.SubType;
-    pCaps->Flags = xi_caps.Flags;
-    return ERROR_SUCCESS;
+BOOL xbox_InputIsConnected(DWORD port) {return host_input_connected(port);}
+DWORD xbox_InputGetCapabilities(DWORD port,DWORD flags,XBOX_INPUT_CAPABILITIES *caps) {
+    (void)flags;if(!caps||!host_input_connected(port))return ERROR_DEVICE_NOT_CONNECTED;
+    memset(caps,0,sizeof *caps);caps->Type=1;caps->SubType=1;return ERROR_SUCCESS;
 }
 
 /* ======================================================================== */
@@ -406,22 +264,21 @@ static void *recomp_guest_ptr(uint32_t va)
 
 uint32_t recomp_host_xgetdevices(void)
 {
-    return 1u;                     /* bit 0 = port 0 present */
+    return (xbox_InputIsConnected(0)?1u:0u)|(xbox_InputIsConnected(1)?2u:0u);
 }
 
 void recomp_host_xgetdevicechanges(uint32_t insertions_va, uint32_t removals_va)
 {
-    static int announced;
+    static uint32_t previous;
     DWORD *ins = (DWORD *)recomp_guest_ptr(insertions_va);
     DWORD *rem = (DWORD *)recomp_guest_ptr(removals_va);
-    *ins = announced ? 0u : 1u;    /* report port 0 inserted once */
-    *rem = 0u;
-    announced = 1;
+    uint32_t current=recomp_host_xgetdevices();
+    *ins=current&~previous;*rem=previous&~current;previous=current;
 }
 
 uint32_t recomp_host_xinputopen(uint32_t port)
 {
-    return port + 1u;              /* any non-zero handle */
+    return port<2 ? port+1u : 0;
 }
 
 void recomp_host_xinput_getcaps(uint32_t caps_va)
@@ -432,7 +289,7 @@ void recomp_host_xinput_getcaps(uint32_t caps_va)
     caps->SubType = 1;             /* XINPUT_DEVSUBTYPE_GAMEPAD */
 }
 
-void recomp_host_xinput_getstate(uint32_t state_va)
+uint32_t recomp_host_xinput_getstate(uint32_t handle, uint32_t state_va)
 {
     XBOX_INPUT_STATE *st = (XBOX_INPUT_STATE *)recomp_guest_ptr(state_va);
     static long calls;
@@ -440,7 +297,7 @@ void recomp_host_xinput_getstate(uint32_t state_va)
         fprintf(stderr, "[INPUT] guest is polling XInputGetState -- "
                         "controller bridge is live\n");
     memset(st, 0, sizeof *st);     /* all-released if no input is held */
-    xbox_InputGetState(0, st);
+    DWORD result=xbox_InputGetState(handle?handle-1u:4u, st);
 
     /* RECOMP_KEY_TRACE: pin down the keyboard->guest merge. Shows, while a key
      * is physically latched in the table, whether xbox_InputGetState actually
@@ -469,4 +326,5 @@ void recomp_host_xinput_getstate(uint32_t state_va)
         st->Gamepad.wButtons |= XBOX_GAMEPAD_START;
         st->dwPacketNumber++;
     }
+    return result;
 }

@@ -3,9 +3,14 @@
 #include <d3d11.h>
 #include <dxgi.h>
 #include <atomic>
+#include <mutex>
 #include <cstdio>
 #include <string>
 #include <vector>
+#include <algorithm>
+#include <cwchar>
+#include "frontend/host_input.h"
+#include "frontend/launcher_art.h"
 #include "render/graphics_settings.h"
 #include "third_party/imgui/imgui.h"
 #include "third_party/imgui/backends/imgui_impl_win32.h"
@@ -13,6 +18,7 @@
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND, UINT, WPARAM, LPARAM);
 extern "C" void xbox_InputKeysClear(void);
+extern "C" void audio_host_pause(int paused);
 
 namespace
 {
@@ -34,35 +40,105 @@ namespace
         int lanczos_ar = 80;
 		int backend = 0, filtering = 1, anisotropy = 3, aa = 0, ssaa = 1, msaa = 1;
 		
-		std::string adapter = "automatic";
+		std::string monitor;
 		bool differs(const Preferences &o) const
 		{
 			return lanczos2d != o.lanczos2d || lanczos_ar != o.lanczos_ar || snn2d != o.snn2d || sharp2d != o.sharp2d || aspect != o.aspect || window43 != o.window43 || window169 != o.window169
 				   || render43 != o.render43 || render169 != o.render169 || backend != o.backend
 				   || filtering != o.filtering || anisotropy != o.anisotropy || aa != o.aa || ssaa != o.ssaa
-				   || msaa != o.msaa || adapter != o.adapter;
+				   || msaa != o.msaa || monitor != o.monitor;
 		}
 	} prefs;
 	
-	struct Adapter
+	struct Monitor
 	{
 		std::string key, 
 		label;
 	};
 	
-	std::vector<Adapter> adapters;
+	std::vector<Monitor> monitors;
 	std::atomic<int> wide{0};
 	std::wstring ini_path;
 	std::string notice;
 	const char *renderer_name = "DirectX 11 (legacy)";
 	HWND hwnd;
-	bool ready = false, visible = false, native_dx11 = false;
-	bool save_error = false;
+	bool ready = false, native_dx11 = false;
+    std::atomic<bool> visible{false};
+	bool save_error = false, startup = false;
+    std::atomic<bool> guest_started{false};
+    bool menu_owned_pause = false;
+    int capture_player=0,capture_row=0; bool capture_clicked=false;
+    std::atomic<int> pause_command{0};
+    HWND startup_window=nullptr;
+    std::atomic<DWORD> window_consumer{0};
+    std::mutex window_messages_mutex;
+    std::vector<MSG> window_messages;
+    bool invalid_ini=false;
+
+	bool ini_syntax_valid()
+	{
+		FILE* f = _wfopen(ini_path.c_str(), L"rb"); 
+		if (!f)
+			return false;
+
+		char line[4096]; 
+		bool section = false, valid = true;
+
+		while (fgets(line, sizeof line, f))
+		{
+			std::string value = line; 
+			auto first = value.find_first_not_of(" \t\r\n"); 
+			if (first == std::string::npos)
+				continue;
+
+			value.erase(0, first); 
+			if (value[0] == ';' || value[0] == '#')
+				continue;
+
+			auto last = value.find_last_not_of(" \t\r\n"); 
+			value.resize(last + 1);
+			
+			if (value[0] == '[')
+			{
+				if (value.size() < 3 || value.back() != ']')
+				{
+					valid = false; 
+					break;
+				}
+				section = true;
+			}
+			else if (!section || value.find('=') == std::string::npos || value[0] == '=')
+			{
+				valid = false; 
+				break;
+			}
+		}
+
+		if (ferror(f))
+			valid = false; 
+		
+		fclose(f); 
+		return valid;
+	}
 
 	int read_int(const wchar_t *key, int fallback, int maximum)
 	{
-		int value = (int)GetPrivateProfileIntW(L"Graphics", key, fallback, ini_path.c_str());
-		return value >= 0 && value <= maximum ? value : fallback;
+        wchar_t text[64];
+        GetPrivateProfileStringW(L"Graphics", key, L"", text, 64, ini_path.c_str());
+        
+		if(!*text)
+			return fallback;
+
+        wchar_t *end = nullptr;
+		long value = wcstol(text,&end,10);
+
+        if(end == text || *end || value < 0 || value > maximum)
+		{
+			invalid_ini = true;
+			return fallback;
+		}
+
+        return (int)value;
 	}
 
 	std::string utf8(const wchar_t *text)
@@ -81,21 +157,21 @@ namespace
 
 	bool save()
 	{
-		char text[2048];
+		char text[16384];
 		int count = snprintf(text, sizeof text,
 							 "; DOA1U host graphics preferences. Aspect, window and NRI resolution/filtering are active.\r\n"
-							 "; NRI SSAA/MSAA/FXAA/SMAA are active. GPU selection remains unavailable. Backend applies on restart.\r\n"
+							 "; NRI SSAA/MSAA/FXAA/SMAA are active. OS selects GPU. Backend applies on restart.\r\n"
 							 "; Resolution values below are preset indices, independently per aspect.\r\n"
 							 "[Graphics]\r\nVersion=1\r\nAspectRatio=%d\r\n"
 							 "Window43=%d\r\nWindow169=%d\r\nRender43=%d\r\nRender169=%d\r\n"
-							 "Adapter=%s\r\nBackend=%d\r\nFiltering=%d\r\nAnisotropy=%d\r\n"
+							 "Monitor=%s\r\nBackend=%d\r\nFiltering=%d\r\nAnisotropy=%d\r\n"
 							 "Lanczos2D=%d\r\nLANCZOS2_AR_STRENGTH=%d\r\nSharp2D=%d\r\nSNN2D=%d\r\nAntiAliasing=%d\r\nSSAA=%d\r\nMSAA=%d\r\n",
 							 prefs.aspect, 
 							 prefs.window43, 
 							 prefs.window169, 
 							 prefs.render43, 
 							 prefs.render169,
-							 prefs.adapter.c_str(), 
+							 prefs.monitor.c_str(),
 							 prefs.backend, 
 							 prefs.filtering, 
 							 prefs.anisotropy, 
@@ -106,6 +182,7 @@ namespace
 							 prefs.ssaa, 
 							 prefs.msaa);
 							 
+		count += host_input_serialize(text+count, (int)sizeof(text)-count);
 		std::wstring temp = ini_path + L"." + std::to_wstring(GetCurrentProcessId()) + L".tmp";
 		
 		HANDLE file =
@@ -135,33 +212,54 @@ namespace
 		return ok;
 	}
 
-	void enumerate_adapters()
+	BOOL CALLBACK add_monitor(HMONITOR monitor, HDC, LPRECT, LPARAM)
 	{
-		adapters.push_back({"automatic", "Automatic (system default)"});
-		IDXGIFactory1 *factory = nullptr;
-		
-		if (FAILED(CreateDXGIFactory1(__uuidof(IDXGIFactory1), (void **)&factory)))
-			return;
-		
-		for (UINT i = 0;; ++i)
+		MONITORINFOEXW info = {}; 
+		info.cbSize = sizeof info;
+
+		if (GetMonitorInfoW(monitor, &info))
 		{
-			IDXGIAdapter1 *adapter = nullptr;
-			if (factory->EnumAdapters1(i, &adapter) == DXGI_ERROR_NOT_FOUND)
-				break;
-			
-			if (!adapter)
-				break;
-			
-			DXGI_ADAPTER_DESC1 desc = {};
-			if (SUCCEEDED(adapter->GetDesc1(&desc)) && !(desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE))
-			{
-				char key[32];
-				snprintf(key, sizeof key, "%08X:%08X", (unsigned)desc.AdapterLuid.HighPart, (unsigned)desc.AdapterLuid.LowPart);
-				adapters.push_back({key, utf8(desc.Description)});
-			}
-			adapter->Release();
+			char label[180]; 
+			snprintf(label, sizeof label, "Display %zu%s  %ld x %ld", monitors.size() + 1, (info.dwFlags & MONITORINFOF_PRIMARY) ? " (Primary)" : "", info.rcMonitor.right - info.rcMonitor.left, info.rcMonitor.bottom - info.rcMonitor.top); 
+			monitors.push_back({ utf8(info.szDevice),label });
 		}
-		factory->Release();
+		
+		return TRUE;
+	}
+
+	void enumerate_monitors()
+	{
+		monitors.clear(); 
+		EnumDisplayMonitors(nullptr, nullptr, add_monitor, 0);
+	}
+
+	HMONITOR selected_monitor()
+	{
+		struct Search
+		{
+			const std::string* key; 
+			HMONITOR result;
+		} 
+
+		search 
+		{ 
+			&prefs.monitor,
+			nullptr 
+		};
+
+		EnumDisplayMonitors(nullptr, nullptr, [](HMONITOR h, HDC, LPRECT, LPARAM data)->BOOL
+		{
+			auto* s = (Search*)data; 
+			MONITORINFOEXW i = {}; 
+			i.cbSize = sizeof i; 
+			
+			if (GetMonitorInfoW(h, &i) && utf8(i.szDevice) == *s->key)
+				s->result = h; 
+			
+			return TRUE;
+		}, (LPARAM)&search);
+		
+		return search.result ? search.result : MonitorFromWindow(hwnd, MONITOR_DEFAULTTOPRIMARY);
 	}
 
 	RECT window_rect(Size size)
@@ -186,7 +284,7 @@ namespace
 	bool fits(Size size)
 	{
 		MONITORINFO info = {sizeof info};
-		if (!GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &info))
+		if (!GetMonitorInfoW(selected_monitor(), &info))
 			return false;
 		
 		RECT rect = window_rect(size);
@@ -197,7 +295,7 @@ namespace
 
 	std::string combo_label(const char *label)
 	{
-		const float column = ImGui::CalcTextSize("Internal resolution").x + ImGui::GetStyle().ItemSpacing.x;
+		const float column = std::max(ImGui::CalcTextSize("Internal resolution").x, ImGui::CalcTextSize("Anti-ringing strength").x) + ImGui::GetStyle().ItemSpacing.x;
 		const float start = ImGui::GetCursorPosX();
 		
 		ImGui::AlignTextToFramePadding();
@@ -244,148 +342,8 @@ namespace
 		}
 	}
 
-	void panel()
-	{
-		ImGuiIO &io = ImGui::GetIO();
-		float width = (io.DisplaySize.x < 620 ? io.DisplaySize.x - 24 : 580);
-		float height = (io.DisplaySize.y < 640 ? io.DisplaySize.y - 24 : 600);
-		
-		ImGui::SetNextWindowSize(ImVec2(width, height), ImGuiCond_FirstUseEver);
-		ImGui::SetNextWindowPos(ImVec2(12, 12), ImGuiCond_FirstUseEver);
-		ImGui::SetNextWindowSizeConstraints(ImVec2(300, 220),
-											ImVec2(io.DisplaySize.x > 24 ? io.DisplaySize.x - 24 : 300,
-												   io.DisplaySize.y > 24 ? io.DisplaySize.y - 24 : 220));
-												   
-		if (ImGui::Begin("Graphics settings", &visible, ImGuiWindowFlags_NoCollapse))
-		{
-			const Preferences before = prefs;
-			float footer = ImGui::GetFrameHeightWithSpacing() + ImGui::GetTextLineHeightWithSpacing() * 3;
-			ImGui::BeginChild("Options", ImVec2(0, -footer), ImGuiChildFlags_None);
-			ImGui::TextUnformatted("Aspect ratio (active)");
-			int aspect = prefs.aspect;
-			
-			if (settings_combo("Aspect ratio", &aspect,
-							 "4:3\0"
-							 "16:9\0"))
-			{
-				prefs.aspect = aspect;
-				wide.store(aspect, std::memory_order_release);
-				notice = "Aspect applied. Save configuration to keep it after restart.";
-				save_error = false;
-			}
-			
-			ImGui::TextWrapped("16:9 expands gameplay horizontally. Menus, HUD and movies retain 4:3 proportions.");
-			ImGui::Separator();
-			ImGui::TextWrapped("Aspect/window settings apply immediately.");
-			
-			if (ImGui::CollapsingHeader("Display and resolution", ImGuiTreeNodeFlags_DefaultOpen))
-			{
-				resolution_combo("Window size", prefs.aspect ? prefs.window169 : prefs.window43, true);
-				resolution_combo("Internal resolution", prefs.aspect ? prefs.render169 : prefs.render43, false);
-				ImGui::TextWrapped("Internal resolution applies next frame, independently of window size. ImGui doesn't change.");
-			}
-			
-			if (ImGui::CollapsingHeader("Graphics device and backend", ImGuiTreeNodeFlags_DefaultOpen))
-			{
-				std::string current = "Unavailable saved adapter (select another)";
-				for (auto &a : adapters)
-				{
-					if (a.key == prefs.adapter)
-						current = a.label;
-				}
-				
-				if (begin_settings_combo("Graphics card", current.c_str()))
-				{
-					for (auto &a : adapters)
-					{
-						// Adapter names can repeat; the DXGI LUID key identifies each device.
-						ImGui::PushID(a.key.c_str());
-						if (ImGui::Selectable(a.label.c_str(), a.key == prefs.adapter))
-							prefs.adapter = a.key;
-						
-						ImGui::PopID();
-					}
-					
-					ImGui::EndCombo();
-				}
-				
-				settings_combo("Rendering backend", &prefs.backend, "DirectX 11\0DirectX 12\0Vulkan\0");
-				ImGui::TextWrapped("Active renderer: %s. Save and restart to change backend. GPU selection is not yet applied.", renderer_name);
-			}
-			
-			if (ImGui::CollapsingHeader("Texture filtering", ImGuiTreeNodeFlags_DefaultOpen))
-			{
-				settings_combo("3D texture filter", &prefs.filtering, "Nearest-neighbor\0Bilinear\0Trilinear\0Anisotropic\0");
-				const bool nri_supported = std::string(renderer_name).find("NRI / ") == 0;
-                ImGui::BeginDisabled(!nri_supported);
-                ImGui::Checkbox("2D filtering (Lanczos2 + anti-ringing)", &prefs.lanczos2d);
-                ImGui::SliderInt("Anti-ringing strength", &prefs.lanczos_ar, 0, 100, "%d%%");
-                ImGui::EndDisabled();
-				ImGui::TextWrapped("Lanczos2 filters 2D artwork during scaling. Anti-ringing: 0% unclamped, 100% fully clamped. Live adjustment; no rebuild. Size unchanged. Movies stay bilinear.");
-				if (prefs.filtering == 3)
-					settings_combo("Anisotropy", &prefs.anisotropy,
-								 "2x\0"
-								 "4x\0"
-								 "8x\0"
-								 "16x\0");
-			}
-			
-			if (ImGui::CollapsingHeader("Anti-aliasing", ImGuiTreeNodeFlags_DefaultOpen))
-			{
-				const bool supported = std::string(renderer_name).find("NRI / ") == 0;
-				ImGui::BeginDisabled(!supported);
-				const char *names[] = {"Off", "SSAA", "MSAA", "FXAA", "SMAA"};
-				if (begin_settings_combo("AA method", names[prefs.aa])) {
-					for (int i = 0; i < 5; ++i) {
-						if (ImGui::Selectable(names[i], prefs.aa == i)) prefs.aa = i;
-					}
-					ImGui::EndCombo();
-				}
-				if (prefs.aa == 1) {
-					settings_combo("SSAA samples", &prefs.ssaa, "2x (2 x 1)\0" "4x (2 x 2)\0");
-					const Size size = prefs.aspect ? sizes169[prefs.render169] : sizes43[prefs.render43];
-					ImGui::Text("Render size: %d x %d", size.w * 2, size.h * (prefs.ssaa ? 2 : 1));
-					ImGui::TextWrapped("Supersampling increases GPU work and memory use. Applies next frame.");
-				} else if (prefs.aa == 2) {
-                    settings_combo("MSAA samples", &prefs.msaa, "2x\0" "4x\0" "8x\0");
-                    ImGui::TextWrapped("Multisampling smooths geometry edges. Unsupported counts fall back to a supported count. Applies next frame.");
-                } else if (prefs.aa == 4) {
-                    ImGui::TextWrapped("SMAA 1x (High): spatial edge detection and morphological blending. Applies next frame.");
-                } else if (prefs.aa == 3) {
-					ImGui::TextWrapped("FXAA smooths high-contrast edges without increasing render resolution. Applies next frame.");
-				}
-				ImGui::EndDisabled();
-				if (!supported) ImGui::TextWrapped("Anti-aliasing requires the NRI renderer.");
-			}
-			
-			ImGui::EndChild();
-			if (prefs.differs(before))
-			{
-				notice = "Unsaved changes.";
-				save_error = false;
-			}
-			
-			ImGui::Separator();
-			if (ImGui::Button("Save configuration", ImVec2(-1, 0)))
-			{
-				save_error = !save();
-				notice = save_error ? "Save failed: could not write doa1u_graphics.ini."
-									: "Saved doa1u_graphics.ini.";
-			}
-			
-			if (!notice.empty())
-			{
-				if (save_error)
-					ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 0.45f, 0.35f, 1));
-				
-				ImGui::TextWrapped("%s", notice.c_str());
-				if (save_error)
-					ImGui::PopStyleColor();
-			}
-			ImGui::TextDisabled("F1 toggles this window. Closing it does NOT save changes.");
-		}
-		ImGui::End();
-	}
+	#include "frontend/launcher_panel.inl"
+
 }
 
 extern "C" void graphics_settings_init(void)
@@ -400,6 +358,8 @@ extern "C" void graphics_settings_init(void)
 	
 	ini_path.resize(slash == std::wstring::npos ? 0 : slash + 1);
 	ini_path += L"doa1u_graphics.ini";
+
+    invalid_ini=GetFileAttributesW(ini_path.c_str())!=INVALID_FILE_ATTRIBUTES&&!ini_syntax_valid();
 	
 	prefs.aspect = read_int(L"AspectRatio", 0, 1);
 	prefs.window43 = read_int(L"Window43", 0, 4);
@@ -417,21 +377,37 @@ extern "C" void graphics_settings_init(void)
 	prefs.ssaa = read_int(L"SSAA", 1, 1);
 	prefs.msaa = read_int(L"MSAA", 1, 2);
 	
-	wchar_t adapter[64];
-	GetPrivateProfileStringW(L"Graphics", L"Adapter", L"automatic", adapter, IM_ARRAYSIZE(adapter), ini_path.c_str());
-	prefs.adapter = utf8(adapter);
-	
-	/* Adapter is an opaque LUID, never allow line/section injection into INI. */
-	if (prefs.adapter != "automatic"
-	    && prefs.adapter.find_first_not_of("0123456789abcdefABCDEF:") != std::string::npos)
-		prefs.adapter = "automatic";
-		
-	wide.store(prefs.aspect, std::memory_order_release);
-	if (GetFileAttributesW(ini_path.c_str()) == INVALID_FILE_ATTRIBUTES && !save())
+    wchar_t monitor[128];
+    GetPrivateProfileStringW(L"Graphics",L"Monitor",L"",monitor,128,ini_path.c_str());
+    prefs.monitor=utf8(monitor);
+
+    if(prefs.monitor.find_first_of("\r\n[]=")!=std::string::npos)
+		invalid_ini=true;
+
+    wchar_t section[8192];
+    DWORD length=GetPrivateProfileSectionW(L"Graphics",section,8192,ini_path.c_str());
+    startup=GetFileAttributesW(ini_path.c_str())==INVALID_FILE_ATTRIBUTES||!length||invalid_ini;
+    
+	if(startup)
 	{
-		notice = "Could not create doa1u_graphics.ini.";
-		save_error = true;
+		prefs=Preferences{};
+		notice=invalid_ini?"Invalid configuration. Defaults loaded.":"";
 	}
+
+    wide.store(prefs.aspect,std::memory_order_release);
+    host_input_init();
+	
+	if(!startup&&!host_input_load(ini_path.c_str()))
+	{
+		startup=true;
+		prefs=Preferences{};
+		notice="Invalid controls configuration. Defaults loaded.";
+		wide.store(prefs.aspect);
+	}
+
+    visible=startup;
+	host_input_menu(visible);
+
 }
 
 extern "C" int graphics_widescreen(void)
@@ -475,15 +451,19 @@ extern "C" unsigned graphics_anisotropy(void)
 extern "C" void graphics_window_apply(void *window)
 {
 	hwnd = (HWND)window;
+	if(startup)
+		return;
+
 	static int applied_aspect = -1, applied_index = -1;
+	static std::string applied_monitor;
 	static HWND applied_window = nullptr;
 	const int index = prefs.aspect ? prefs.window169 : prefs.window43;
 	
-	if (applied_window == hwnd && applied_aspect == prefs.aspect && applied_index == index)
+	if (applied_window == hwnd && applied_aspect == prefs.aspect && applied_index == index && applied_monitor == prefs.monitor)
 		return;
 
 	MONITORINFO info = {sizeof info};
-	if (!GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &info))
+	if (!GetMonitorInfoW(selected_monitor(), &info))
 		return;
 	
 	const Size *sizes = prefs.aspect ? sizes169 : sizes43;
@@ -537,6 +517,7 @@ extern "C" void graphics_window_apply(void *window)
 		applied_window = hwnd;
 		applied_aspect = prefs.aspect;
 		applied_index = index;
+		applied_monitor=prefs.monitor;
 	}
 }
 
@@ -547,6 +528,7 @@ extern "C" void graphics_ui_renderer_name(const char *name)
 
 extern "C" int graphics_ui_init(void *window, void *device, void *context)
 {
+    focus_navigation = true;
 	hwnd = (HWND)window;
 	IMGUI_CHECKVERSION();
 
@@ -555,7 +537,37 @@ extern "C" int graphics_ui_init(void *window, void *device, void *context)
 	ImGuiIO &io = ImGui::GetIO();
 	io.IniFilename = nullptr;
 	io.LogFilename = nullptr;
+    io.ConfigFlags|=ImGuiConfigFlags_NavEnableKeyboard|ImGuiConfigFlags_NavEnableGamepad;
+    char windows_dir[MAX_PATH]{};
+    GetWindowsDirectoryA(windows_dir, MAX_PATH);
+
+    const std::string font_path=std::string(windows_dir)+"/Fonts/georgia.ttf";
+    const std::string heading_path=std::string(windows_dir)+"/Fonts/georgiab.ttf";
+    ui_font=nullptr;
+	heading_font=nullptr;
+
+    if(GetFileAttributesA(font_path.c_str())!=INVALID_FILE_ATTRIBUTES)
+        ui_font=io.Fonts->AddFontFromFileTTF(font_path.c_str(),18);
+
+    if(GetFileAttributesA(heading_path.c_str())!=INVALID_FILE_ATTRIBUTES)
+        heading_font=io.Fonts->AddFontFromFileTTF(heading_path.c_str(),28);
+
+    if(!ui_font)
+		ui_font=io.Fonts->AddFontDefault();
+	
+	if(!heading_font)
+		heading_font=ui_font;
+
 	ImGui::StyleColorsDark();
+    auto &style=ImGui::GetStyle();
+    style.Colors[ImGuiCol_Text]=ImVec4(.92f,.88f,.80f,1);
+    style.Colors[ImGuiCol_TextDisabled]=ImVec4(.65f,.63f,.60f,1);
+    style.Colors[ImGuiCol_Button]=ImVec4(.10f,.095f,.105f,.95f);
+    style.Colors[ImGuiCol_ButtonHovered]=ImVec4(.39f,.30f,.47f,1);
+    style.Colors[ImGuiCol_ButtonActive]=ImVec4(.45f,.34f,.53f,1);
+    style.Colors[ImGuiCol_FrameBg]=ImVec4(.12f,.115f,.12f,1);
+    style.Colors[ImGuiCol_Header]=ImVec4(.32f,.24f,.40f,1);
+    style.Colors[ImGuiCol_CheckMark]=ImVec4(.77f,.62f,.38f,1);
 
 	if (!ImGui_ImplWin32_Init(hwnd))
 	{
@@ -571,7 +583,8 @@ extern "C" int graphics_ui_init(void *window, void *device, void *context)
 		return 0;
 	}
 
-	enumerate_adapters();
+	enumerate_monitors();
+    launcher_art_init();
 	ready = true;
 
 	return 1;
@@ -579,6 +592,12 @@ extern "C" int graphics_ui_init(void *window, void *device, void *context)
 
 extern "C" int graphics_ui_message(void *window, unsigned message, uintptr_t wparam, intptr_t lparam)
 {
+    // Native default messages can still arrive on the dedicated HWND owner.
+    // The renderer is the sole owner of ImGui after startup handoff.
+    DWORD consumer=window_consumer.load();
+    if(consumer&&consumer!=GetCurrentThreadId())
+		return 0;
+
 	if (!ready)
 		return 0;
 
@@ -586,7 +605,13 @@ extern "C" int graphics_ui_message(void *window, unsigned message, uintptr_t wpa
 	{
 		if (!(lparam & (1LL << 30)))
 		{
-			visible = !visible;
+			if(!visible)
+			{
+				visible=true;
+                focus_navigation = true;
+				menu_owned_pause=false;
+				host_input_menu(1);
+			}
 			xbox_InputKeysClear();
 		}
 
@@ -596,7 +621,23 @@ extern "C" int graphics_ui_message(void *window, unsigned message, uintptr_t wpa
 	if (message == WM_KEYUP && wparam == VK_F1)
 		return 1;
 
-	ImGui_ImplWin32_WndProcHandler((HWND)window, message, (WPARAM)wparam, (LPARAM)lparam);
+	if(message==WM_DISPLAYCHANGE)
+		enumerate_monitors();
+
+    if(message==WM_KILLFOCUS)
+		host_input_focus(0);
+
+    if(message==WM_SETFOCUS)
+		host_input_focus(1);
+
+    if((message==WM_KEYDOWN||message==WM_KEYUP||message==WM_SYSKEYDOWN||message==WM_SYSKEYUP)&&host_input_key((int)wparam,message==WM_KEYDOWN||message==WM_SYSKEYDOWN))
+		return 1;
+
+    if((message==WM_KEYDOWN||message==WM_KEYUP)&&wparam==VK_ESCAPE)
+		return 0;
+
+    // Enter is an ordinary remappable Start input in game and ImGui activate in menus.
+    ImGui_ImplWin32_WndProcHandler((HWND)window, message, (WPARAM)wparam, (LPARAM)lparam);
 
 	if (!visible)
 		return 0;
@@ -615,14 +656,38 @@ extern "C" void graphics_ui_frame(void)
 	if (!ready)
 		return;
 
-	if (native_dx11) ImGui_ImplDX11_NewFrame();
+	host_input_update();
+    if(host_input_disconnected()&&guest_started)
+		pause_command.store(1);
+
+    host_input_navigation();
+    static bool audio_paused=false;
+    bool paused=graphics_game_paused()!=0;
+
+    if(paused!=audio_paused)
+	{
+		audio_host_pause(paused);
+		audio_paused=paused;
+	}
+
+    if (native_dx11) 
+		ImGui_ImplDX11_NewFrame();
+
 	ImGui_ImplWin32_NewFrame();
 	ImGui::NewFrame();
 
-	if (visible)
-		panel();
+    if (visible)
+        panel();
+    
+	// Resume audio before returning control to the guest on Save/Play.
+    paused=graphics_game_paused()!=0;
+    if(paused!=audio_paused)
+	{
+		audio_host_pause(paused);
+		audio_paused=paused;
+	}
 
-	ImGui::Render();
+    ImGui::Render();
 }
 
 extern "C" void graphics_ui_draw(void)
@@ -636,9 +701,10 @@ extern "C" void graphics_ui_shutdown(void)
     if (!ready) return;
     if (native_dx11) ImGui_ImplDX11_Shutdown();
     ImGui_ImplWin32_Shutdown();
+    launcher_art_shutdown();
     ImGui::DestroyContext();
-    ready = visible = false;
-    adapters.clear();
+    ready = false;
+    monitors.clear();
 }
 
 extern "C" int graphics_backend(void) { return prefs.backend; }
@@ -649,3 +715,103 @@ extern "C" int graphics_snn_2d(void) { return 0; /* dormant SNN experiment */ }
 
 extern "C" int graphics_lanczos_2d(void) { return prefs.lanczos2d; }
 extern "C" float graphics_lanczos_ar(void) { return prefs.lanczos_ar / 100.0f; }
+
+extern "C" int graphics_launcher_needed()
+{
+	return startup;
+}
+extern "C" void graphics_game_started()
+{
+	guest_started = true; host_input_menu(0);
+}
+extern "C" int graphics_menu_visible()
+{
+	return visible;
+}
+extern "C" int graphics_game_paused()
+{
+	return guest_started.load() && visible.load();
+}
+extern "C" void graphics_wait_for_game()
+{
+	while (graphics_game_paused())Sleep(1);
+}
+extern "C" void graphics_set_startup_window(void* w)
+{
+	startup_window = (HWND)w;
+}
+extern "C" void* graphics_take_startup_window()
+{
+	HWND w = startup_window; 
+	startup_window = nullptr; 
+	
+	if (w)
+		window_consumer.store(GetCurrentThreadId()); 
+	
+	return w;
+}
+extern "C" int graphics_window_defer_message(void* window, unsigned message, uintptr_t wparam, intptr_t lparam)
+{
+	DWORD consumer = window_consumer.load();
+	if (!consumer || consumer == GetCurrentThreadId())
+		return 0;
+
+	// Default window-management messages stay on the owner. Only messages
+	// consumed by the game/UI are queued, so synchronous Win32 replies work.
+	bool input = (message >= WM_KEYFIRST && message <= WM_KEYLAST) ||
+		(message >= WM_MOUSEFIRST && message <= WM_MOUSELAST) ||
+		message == WM_SIZE || message == WM_CLOSE || message == WM_KILLFOCUS ||
+		message == WM_SETFOCUS || message == WM_DISPLAYCHANGE;
+	
+	if (!input)
+		return 0;
+
+	MSG event {}; 
+	event.hwnd = (HWND)window; 
+	event.message = message; 
+	event.wParam = wparam; 
+	event.lParam = lparam;
+
+	std::lock_guard<std::mutex> guard(window_messages_mutex);
+	window_messages.push_back(event); return 1;
+}
+
+extern "C" void graphics_window_dispatch_pending()
+{
+	std::vector<MSG> pending;
+	{
+		std::lock_guard<std::mutex> guard(window_messages_mutex); 
+		pending.swap(window_messages);
+	}
+
+	for (const auto& event : pending)if (IsWindow(event.hwnd))
+	{
+		auto handler = (WNDPROC)GetWindowLongPtrW(event.hwnd, GWLP_WNDPROC);
+		CallWindowProcW(handler, event.hwnd, event.message, event.wParam, event.lParam);
+	}
+}
+
+extern "C" int graphics_pause_request(int paused)
+{
+	int cmd = pause_command.exchange(0); if (cmd == 1)
+	{
+		if (paused)
+			return 0; 
+	
+		return 1;
+	}
+
+	if (cmd == 2)
+		return paused ? 2 : 0; 
+	
+	if (cmd == 3)
+		return paused ? 2 : 1; 
+	
+	return 0;
+}
+
+extern "C" void graphics_pause_result(int before, int after)
+{
+	if (visible && !before && after)
+		menu_owned_pause = true;
+}

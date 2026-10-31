@@ -44,6 +44,19 @@ typedef struct BankVoice
 
 static BankVoice voices[BANK_VOICE_COUNT];
 static SRWLOCK voice_lock = SRWLOCK_INIT;
+static int host_paused;
+void bank_host_pause(int paused)
+{
+    AcquireSRWLockExclusive(&voice_lock);
+    host_paused=paused!=0;
+    for(unsigned i=0;i<BANK_VOICE_COUNT;++i) {
+        BankVoice *v=&voices[i];
+        if(!v->output||!v->playing)continue;
+        if(host_paused||v->paused)waveOutPause(v->output);
+        else waveOutRestart(v->output);
+    }
+    ReleaseSRWLockExclusive(&voice_lock);
+}
 
 static uint32_t arg(unsigned n) 
 { 
@@ -179,7 +192,7 @@ static uint32_t play_voice(BankVoice *v, uint32_t flags)
     }
 
     v->playing = 1;
-    waveOutRestart(v->output);
+    if(!host_paused)waveOutRestart(v->output);
 
     return 0;
 }
@@ -354,10 +367,10 @@ static void bank_buffer_call(unsigned operation, unsigned args, recomp_func_t fa
 
         case 10:
             v->paused = value != 0;
-            if (v->paused) 
+            if (v->paused || host_paused)
                 waveOutPause(v->output); 
             else 
-                waveOutRestart(v->output);
+                if(!host_paused)waveOutRestart(v->output);
             break;
     }
 

@@ -166,6 +166,9 @@ extern void xbox_InputKeysClear(void);
 
 static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM w, LPARAM l)
 {
+    if (graphics_window_defer_message(h, m, (uintptr_t)w, (intptr_t)l)) 
+        return 0;
+
     if (graphics_ui_message(h,m,(uintptr_t)w,(intptr_t)l)) 
 		return 0;
 	
@@ -326,7 +329,11 @@ static int ensure_device(const Nv2aSurface *s)
     RECT r = { 0, 0, (LONG)s_bb_w, (LONG)s_bb_h };
     AdjustWindowRect(&r, WS_OVERLAPPEDWINDOW, FALSE);
 	
-    s_hwnd = CreateWindowExA(0, "XboxRecompD3D11", "Dead or Alive - ULTIMATE",
+    s_hwnd = (HWND)graphics_take_startup_window();
+    if(s_hwnd)
+        SetWindowLongPtrW(s_hwnd,GWLP_WNDPROC,(LONG_PTR)wndproc);
+    else 
+        s_hwnd = CreateWindowExA(0, "XboxRecompD3D11", "Dead or Alive - ULTIMATE",
                              WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT,
                              r.right - r.left, r.bottom - r.top,
                              NULL, NULL, wc.hInstance, NULL);
@@ -1365,7 +1372,7 @@ static void gpu_movie_overlay(void)
 	s_movie_drawing = 0;
 }
 
-static void gpu_flip(void)
+static void gpu_flip_once(void)
 {
     if (!s_dev || s_dead) 
 		return;
@@ -1458,6 +1465,7 @@ static void gpu_flip(void)
     s_frames++;
 
     MSG msg;
+    graphics_window_dispatch_pending();
     while (PeekMessageA(&msg, NULL, 0, 0, PM_REMOVE)) 
 	{
         TranslateMessage(&msg);
@@ -1469,6 +1477,13 @@ static void gpu_flip(void)
     pace_frame();
 }
 
+static void gpu_flip(void)
+{
+    do 
+    { 
+        gpu_flip_once(); 
+    } while(!s_dead && graphics_game_paused());
+}
 static const Nv2aBackend s_backend = { gpu_clear, gpu_draw, gpu_flip };
 
 /* Called from main.c when RECOMP_GPU is set, before the guest runs. */

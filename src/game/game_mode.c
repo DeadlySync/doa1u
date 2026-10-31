@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdint.h>
 #include "game/game_driver.h"
+#include "render/graphics_settings.h"
 
 #define TRK(bits,addr,name)																\
 	do {																				\
@@ -27,6 +28,21 @@ extern uint64_t g_gd_frame;
 void match_pause_tick(void)
 {
 	uint32_t owner_before = GMEM32(DOA1U_PAUSE_OWNER_VA);
+    int paused_before = owner_before != 0;
+    int command = graphics_pause_request(paused_before);
+    uint32_t edge_address=0;
+    uint8_t saved_edge=0;
+    
+	// Feed Start into the original owner/edge handler, not a host freeze flag.
+    if(command && GMEM8(DOA1U_SCENE_MODE_VA)==1 && GMEM8(DOA1U_MATCH_SUBSTATE_VA)==1) 
+	{
+        uint32_t port = owner_before == 2 ? GMEM32(0x30F9B8) : GMEM32(0x30F9B4);
+        if(port<4)
+		{
+			edge_address = 0x6E9A98 + port * 0x2c;
+			saved_edge = GMEM8(edge_address);
+			GMEM8(edge_address) = saved_edge|0x10;}
+    }
 
 	if (gd_enabled("RECOMP_PAUSE_TRACE") && (GMEM8(DOA1U_PAD_PRESSED_EDGES_VA) & DOA1U_PAD_START_MASK))
 		fprintf(stderr, "[PAUSE] Start edge scene=%u substate=%u mode=%u countdown=%u human=%u port=%u owner=%u\n",
@@ -39,6 +55,10 @@ void match_pause_tick(void)
 			owner_before);
 
 	sub_0004D220_gen();
+    if(edge_address)
+		GMEM8(edge_address) = saved_edge;
+
+    graphics_pause_result(paused_before,GMEM32(DOA1U_PAUSE_OWNER_VA)!=0);
 
 	if (gd_enabled("RECOMP_PAUSE_TRACE") && owner_before != GMEM32(DOA1U_PAUSE_OWNER_VA))
 		fprintf(stderr, "[PAUSE] owner %u -> %u, pause=%u @%llu\n", owner_before,

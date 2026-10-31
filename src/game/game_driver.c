@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #include "game/game_driver.h"
+#include "render/graphics_settings.h"
 
 extern void sub_000689E0_gen(void);   /* frame_end (generated body)              */
 extern void sub_00052240_gen(void);   /* register_task_fiber(id, fn) (generated) */
@@ -183,6 +184,8 @@ static void gd_run_frame_modules(uint64_t frame)
  // FUN_000689E0
 void frame_end(void)
 {
+    /* UI is serviced independently by the GPU executor while the guest waits. */
+    graphics_wait_for_game();
 	gd_run_frame_modules(g_gd_frame);
 	g_gd_frame++;
 

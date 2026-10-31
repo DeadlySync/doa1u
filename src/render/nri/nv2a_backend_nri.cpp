@@ -615,6 +615,9 @@ namespace
 
 	LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 	{
+		if (graphics_window_defer_message(hwnd, msg, wparam, lparam)) 
+			return 0;
+
 		if (graphics_ui_message(hwnd, msg, wparam, lparam))
 			return 0;
 		
@@ -656,6 +659,7 @@ namespace
 
 	void pump()
 	{
+        graphics_window_dispatch_pending();
 		MSG msg;
 		while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE))
 		{
@@ -1419,8 +1423,11 @@ namespace
 		wc.lpszClassName = L"DOA1UNRI";
 		RegisterClassW(&wc);
 		
-		window =
-		    CreateWindowExW(0, wc.lpszClassName, L"DOA1U - NRI / D3D11", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT,
+		window = (HWND)graphics_take_startup_window();
+        if(window)
+			SetWindowLongPtrW(window,GWLP_WNDPROC,(LONG_PTR)wndproc);
+        else 
+			window = CreateWindowExW(0, wc.lpszClassName, L"Dead or Alive: ULTIMATE", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT,
 		                    CW_USEDEFAULT, 660, 520, nullptr, nullptr, wc.hInstance, nullptr);
 							
 		if (!window)
@@ -2029,8 +2036,13 @@ namespace
 	{
 		try
 		{
-			if (ensure())
-				flip();
+			if (ensure()) 
+			{
+                do 
+				{ 
+					flip(); 
+				} while(graphics_game_paused()&&ensure());
+            }
 			else if (fallback)
 				fallback->flip();
 			else

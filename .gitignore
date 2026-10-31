@@ -232,3 +232,9 @@ Thumbs.db
 
 !/tools/nri_backend_check.cpp
 !/tools/compile_nri_spirv.py
+!/tools/launcher_check.cpp
+
+# Pinned SDL3 redistributable/import library (required for offline builds).
+!src/third_party/SDL3-vendor/SDL3-3.4.18/lib/x64/
+!src/third_party/SDL3-vendor/SDL3-3.4.18/lib/x64/SDL3.lib
+!src/third_party/SDL3-vendor/SDL3-3.4.18/lib/x64/SDL3.dll

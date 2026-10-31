@@ -217,7 +217,7 @@ void panel()
 	if (page == 0)
 		ImGui::SetCursorPosY(ImGui::GetCursorPosY() - 10 * ui_scale);
 	else
-		ImGui::Spacing();
+	ImGui::Spacing();
 
 	if (page == 0)
 	{

@@ -30,4 +30,4 @@ END
 
 // Icon resource 1 is linked separately from resources/app_icon.res.
 201 RCDATA "../docs/assets/launcher-background.png"
-202 RCDATA "../docs/assets/launcher-final-mockup-v3.png"
+202 RCDATA "../docs/assets/launcher-logo.png"

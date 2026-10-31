@@ -1,0 +1,2 @@
+# Preserve the official vendored archive byte-for-byte on every platform.
+src/third_party/SDL3/upstream/** -text

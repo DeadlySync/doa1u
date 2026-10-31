@@ -109,7 +109,7 @@ void check_api_messages() {
 int main(int argc, char** argv) {
     SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
     try {
-        if (argc < 2 || argc > 3) throw std::runtime_error("Usage: nri_backend_check d3d11|d3d12|vulkan [--present|--filter|--smaa|--msaa|--sharp2d|--snn]");
+        if (argc < 2 || argc > 3) throw std::runtime_error("Usage: nri_backend_check d3d11|d3d12|vulkan [--present|--filter|--smaa|--msaa|--sharp2d|--snn|--dimming]");
         active_api = !std::strcmp(argv[1], "d3d11") ? nri::GraphicsAPI::D3D11 :
             !std::strcmp(argv[1], "d3d12") ? nri::GraphicsAPI::D3D12 : nri::GraphicsAPI::VK;
         QueryPerformanceFrequency(&timing_frequency);
@@ -219,6 +219,7 @@ int main(int argc, char** argv) {
         bool smaa_check = argc == 3 && !std::strcmp(argv[2], "--smaa");
         bool snn_check = argc == 3 && !std::strcmp(argv[2], "--snn");
         bool sharp_check = snn_check || (argc == 3 && !std::strcmp(argv[2], "--sharp2d"));
+        bool dimming_check = argc == 3 && !std::strcmp(argv[2], "--dimming");
         bool filtering_check = argc == 3 && !std::strcmp(argv[2], "--filter");
         double contrast[8] = {};
         if (snn_check) test_texture_alpha=128;
@@ -251,7 +252,8 @@ int main(int argc, char** argv) {
             create_color_target(result, nri::Format::RGBA8_UNORM);
             scene_samples = saved_samples;
             render_width = saved_w; render_height = saved_h;
-            clear(0xF3, 0xFF000000, 0xFFFFFF00);
+            if (dimming_check) test_wide=(iteration/2)%2;
+            clear(0xF3, dimming_check ? 0xFFFFFFFF : 0xFF000000, 0xFFFFFF00);
             Nv2aVertex verts[3] = {{0,0,0,1,0xFF20A0E0,0,0}, {64,0,0,1,0xFF20A0E0,0,0}, {0,48,0,1,0xFF20A0E0,0,0}};
             Nv2aSurface surface = {}; surface.width = 64; surface.height = 48;
             Nv2aBatch batch = {}; batch.vertices = verts; batch.count = 3;
@@ -265,11 +267,27 @@ int main(int argc, char** argv) {
             }
             Nv2aRenderState state = {};
             if (msaa_check) { state.depth_test_enable=state.depth_write=1; batch.state=&state; }
-            draw(&surface, &batch);
+            if (!dimming_check) draw(&surface, &batch);
             if (msaa_check) {
                 // Far geometry must not overwrite the nearer samples/depth.
                 for (auto& v : verts) { v.z=16777215.0f; v.diffuse=0xFFFF0000; }
                 draw(&surface,&batch);
+            }
+            if (dimming_check) {
+                // Captured training overlay: black alpha 0x90, 1/32-pixel bias.
+                // Garbage UVs are irrelevant once the executor disables texture 0.
+                Nv2aVertex q[6]={{0.03125f,0.03125f,0,1,0x90000000,27.5f,25.25f},
+                    {64.03125f,0.03125f,0,1,0x90000000,30.75f,25.25f},
+                    {0.03125f,48.03125f,0,1,0x90000000,27.5f,30},
+                    {64.03125f,0.03125f,0,1,0x90000000,30.75f,25.25f},
+                    {0.03125f,48.03125f,0,1,0x90000000,27.5f,30},
+                    {64.03125f,48.03125f,0,1,0x90000000,1e-38f,8e-39f}};
+                Nv2aRenderState dim={}; dim.blend_enable=1;
+                Nv2aBatch overlay={}; overlay.vertices=q; overlay.count=6;
+                overlay.state=&dim; overlay.vertex_domain=NV2A_VERTEX_DOMAIN_SCREEN;
+                draw(&surface,&overlay);
+                if (!hud_tails[&scene].draws.back().full_canvas)
+                    throw std::runtime_error("Biased dimming rectangle not recognized as full canvas");
             }
             // Exercise descriptor-pool rollover without changing the image.
             if (iteration == 0 && !filtering_check && !msaa_check) {
@@ -336,7 +354,7 @@ int main(int argc, char** argv) {
                 world.vertex_domain=NV2A_VERTEX_DOMAIN_SCREEN; state.depth_test_enable=1; world.state=&state;
                 if (is_2d(world)) throw std::runtime_error("Depth effect classified as HUD");
             }
-            Texture& scene_input=sharp_check ? hud_tails[&scene].before : scene;
+            Texture& scene_input=(sharp_check || (dimming_check && iteration%2)) ? hud_tails[&scene].before : scene;
             Constants constants = {};
             constants.surf_w = 1.0f/render_width; constants.surf_h = 1.0f/render_height;
             constants.tex_w = (float)aa_grid_x(active_aa); constants.tex_h = (float)aa_grid_y(active_aa, ssaa_samples);
@@ -348,6 +366,7 @@ int main(int argc, char** argv) {
                 test_sharp2d=iteration%2==0;
                 render_hud(hud_tails[&scene],result,width,height);
             }
+            if (dimming_check && iteration%2) render_hud(hud_tails[&scene],result,width,height);
             transition(result,nri::AccessBits::COLOR_ATTACHMENT,nri::Layout::COLOR_ATTACHMENT,nri::StageBits::COLOR_ATTACHMENT);
             doa1u::ui::prepare(*frame->commands);
             nri::AttachmentDesc color = {}; color.descriptor = result.view;
@@ -371,6 +390,12 @@ int main(int argc, char** argv) {
             bool color_ok = std::abs((int)pixel(8,8)[0] - 32) <= 1 && std::abs((int)pixel(8,8)[1] - 160) <= 1 && std::abs((int)pixel(8,8)[2] - 224) <= 1;
             bool black = pixel(60,44)[0] < 3 && pixel(60,44)[1] < 3 && pixel(60,44)[2] < 3;
             bool red_ui = pixel(48,8)[0] > 250 && pixel(48,8)[1] < 3 && pixel(48,8)[2] < 3;
+            if (dimming_check) {
+                for (unsigned x : {2u,16u,32u,48u,61u})
+                    for (unsigned c=0;c<3;++c)
+                        if (std::abs((int)pixel(x,24)[c]-111)>2)
+                            throw std::runtime_error("Dimming is not uniform across widescreen/diagonal");
+            }
             if (smaa_check || msaa_check) {
                 unsigned softened=0;
                 for (unsigned y=12;y<22;++y) for (unsigned x=12;x<54;++x) {
@@ -425,7 +450,7 @@ int main(int argc, char** argv) {
                 std::fprintf(stderr,"SHARP2D %s AA %d samples %u: black/white pixels %u/%u\n",argv[1],active_aa,scene_samples,dark,light);
             }
             core.UnmapBuffer(*readback);
-            if (!sharp_check && !filtering_check && (!color_ok || !black || !red_ui)) throw std::runtime_error("Pixel mismatch: scene orientation/color or post-AA ImGui");
+            if (!dimming_check && !sharp_check && !filtering_check && (!color_ok || !black || !red_ui)) throw std::runtime_error("Pixel mismatch: scene orientation/color or post-AA ImGui");
             invalidate_hud(&scene);
             destroy(result); destroy(scene); destroy(depth);
         }
@@ -438,6 +463,7 @@ int main(int argc, char** argv) {
         check_api_messages();
         if (validation_errors) throw std::runtime_error("NRI validation reported errors");
         cleanup();
+        if (dimming_check) { std::fprintf(stderr,"PASS %s: uniform training dimming across wide canvas, original/AA/HUD replay\n",argv[1]); return 0; }
         if (snn_check) { std::fprintf(stderr,"PASS %s: all four SNN/nearest combinations, source-before-scaling pixels and all AA modes\n",argv[1]); return 0; }
         if (sharp_check) { std::fprintf(stderr,"PASS %s: semantic FVF HUD, independent original/sharp sampling, all AA modes, identical on/off sizing, ordering and immutable snapshots\n",argv[1]); return 0; }
         if (smaa_check || msaa_check) {

@@ -13749,7 +13749,7 @@ loc_000570D0: ;
  * CC: cdecl, 0 params, returns int_or_void
  * Frame: fpo_leaf
  */
-void sub_000570E0(void)
+void sub_000570E0_gen(void) /* named throw move-table shadow */
 {
     int _flags = 0; /* fallback flag var */
     uint32_t _fa = 0, _fb = 0;

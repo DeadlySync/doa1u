@@ -12,7 +12,7 @@
 #include "Extensions/NRISwapChain.h"
 #include "xinput_xbox.h"
 #include "third_party/imgui/imgui_internal.h"
-#include "frontend/host_input.h"
+#include "controller/host_input.h"
 #include "../src/render/graphics_settings.cpp"
 #include "../src/frontend/launcher_startup.cpp"
 extern "C" void xbox_InputKeysClear()
@@ -188,14 +188,54 @@ int main()
 	require(SDL_Init(SDL_INIT_GAMEPAD), "SDL gamepad subsystem");
 	auto first = virtual_pad("DOA1U synthetic controller 1"), second = virtual_pad("DOA1U synthetic controller 2");
 	host_input_init(); host_input_update();
-	require(!host_input_connected(0) && !host_input_connected(1), "preconnected controllers wait to join");
+	require(host_input_type(0) <= 0 && !host_input_connected(1), "preconnected controllers wait to join; keyboard may expose P1");
 	press(second, SDL_GAMEPAD_BUTTON_SOUTH, true); require(host_input_connected(0) && !host_input_connected(1), "first pressed controller joins P1"); press(second, SDL_GAMEPAD_BUTTON_SOUTH, false);
 	press(first, SDL_GAMEPAD_BUTTON_EAST, true); require(host_input_connected(0) && host_input_connected(1), "second distinct controller joins P2"); press(first, SDL_GAMEPAD_BUTTON_EAST, false);
 	host_input_menu(0); host_input_update();
 	press(first, SDL_GAMEPAD_BUTTON_WEST, true); XBOX_INPUT_STATE state {}; require(host_input_read(1, &state) && state.Gamepad.bAnalogButtons[XBOX_BUTTON_X], "P2 routed to guest port 1"); require(host_input_read(0, &state) && !state.Gamepad.bAnalogButtons[XBOX_BUTTON_X], "P2 not merged into P1"); press(first, SDL_GAMEPAD_BUTTON_WEST, false);
 	auto third = virtual_pad("DOA1U synthetic extra controller"); host_input_update(); press(third, SDL_GAMEPAD_BUTTON_NORTH, true); require(host_input_read(0, &state) && !state.Gamepad.bAnalogButtons[XBOX_BUTTON_Y], "third controller ignored for P1"); require(host_input_read(1, &state) && !state.Gamepad.bAnalogButtons[XBOX_BUTTON_Y], "third controller ignored for P2");
-	SDL_CloseJoystick(second.joystick); SDL_DetachVirtualJoystick(second.id); host_input_update(); require(host_input_disconnected() && !host_input_connected(0) && host_input_connected(1), "disconnect notifies pause and retains surviving P2 slot");
+	// P1 alternates keyboard/pad without merging, stealing P2, or held-input takeover.
+	host_input_key(VK_LEFT, 1); host_input_update();
+	require(host_input_read(0, &state) && (state.Gamepad.wButtons & 4), "keyboard controls P1 with pads connected");
+	press(second, SDL_GAMEPAD_BUTTON_SOUTH, true);
+	require(host_input_read(0, &state) && state.Gamepad.bAnalogButtons[XBOX_BUTTON_A] && !(state.Gamepad.wButtons & 4), "P1 pad replaces held keyboard input");
+	host_input_key('C', 1); host_input_update();
+	require(host_input_read(0, &state) && state.Gamepad.bAnalogButtons[XBOX_BUTTON_X] && !state.Gamepad.bAnalogButtons[XBOX_BUTTON_A], "fresh keyboard key replaces held P1 pad");
+	host_input_update(); host_input_key('C', 1); host_input_update();
+	require(host_input_read(0, &state) && state.Gamepad.bAnalogButtons[XBOX_BUTTON_X], "held pad cannot reclaim P1");
+	press(first, SDL_GAMEPAD_BUTTON_NORTH, true);
+	require(host_input_read(1, &state) && state.Gamepad.bAnalogButtons[XBOX_BUTTON_Y], "P2 acts while P1 uses keyboard");
+	require(host_input_read(0, &state) && state.Gamepad.bAnalogButtons[XBOX_BUTTON_X] && !state.Gamepad.bAnalogButtons[XBOX_BUTTON_Y], "P2 activity never switches or merges P1");
+	press(first, SDL_GAMEPAD_BUTTON_NORTH, false);
+	press(second, SDL_GAMEPAD_BUTTON_SOUTH, false);
+	SDL_SetJoystickVirtualAxis(second.joystick, 0, 4000); host_input_update();
+	require(host_input_read(0, &state) && state.Gamepad.bAnalogButtons[XBOX_BUTTON_X] && !state.Gamepad.sThumbLX, "stick drift cannot select pad");
+	SDL_SetJoystickVirtualAxis(second.joystick, 0, 26000); host_input_update();
+	require(host_input_read(0, &state) && state.Gamepad.sThumbLX > 20000 && !state.Gamepad.bAnalogButtons[XBOX_BUTTON_X], "deliberate stick selects P1 pad");
+	host_input_key('C', 0); host_input_key('C', 1); host_input_update();
+	SDL_SetJoystickVirtualAxis(second.joystick, 0, 18000); host_input_update();
+	SDL_SetJoystickVirtualAxis(second.joystick, 0, 24000); host_input_update();
+	require(host_input_read(0, &state) && state.Gamepad.bAnalogButtons[XBOX_BUTTON_X] && !state.Gamepad.sThumbLX, "axis hysteresis prevents held-stick takeover");
+	SDL_SetJoystickVirtualAxis(second.joystick, 0, 0); host_input_update();
+	host_input_key('C', 0); host_input_key(VK_LEFT, 0);
+	press(second, SDL_GAMEPAD_BUTTON_SOUTH, true);
+	host_input_key('C', 1); host_input_key(VK_F1, 1); host_input_key(VK_ESCAPE, 1); host_input_update();
+	require(host_input_read(0, &state) && state.Gamepad.bAnalogButtons[XBOX_BUTTON_X] && !state.Gamepad.bAnalogButtons[XBOX_BUTTON_A], "latest keyboard press owns P1");
+	press(second, SDL_GAMEPAD_BUTTON_SOUTH, false); press(second, SDL_GAMEPAD_BUTTON_SOUTH, true);
+	host_input_key('C', 1); host_input_key(VK_F1, 0); host_input_key(VK_F1, 1); host_input_update();
+	require(host_input_read(0, &state) && state.Gamepad.bAnalogButtons[XBOX_BUTTON_A] && !state.Gamepad.bAnalogButtons[XBOX_BUTTON_X], "key repeats and host shortcuts cannot steal P1");
+	host_input_clear(); press(second, SDL_GAMEPAD_BUTTON_SOUTH, false);
+	SDL_CloseJoystick(second.joystick); SDL_DetachVirtualJoystick(second.id); host_input_update(); require(host_input_disconnected() && host_input_connected(0) && host_input_type(0) == 0 && host_input_connected(1), "disconnect pauses, keyboard retains P1, surviving P2 stays assigned");
 	auto replacement = virtual_pad("DOA1U synthetic replacement"); host_input_update(); require(host_input_connected(0) && host_input_connected(1), "new controller fills empty P1 slot");
+	host_input_key('C', 1); host_input_update();
+	require(host_input_read(0, &state) && state.Gamepad.bAnalogButtons[XBOX_BUTTON_X], "keyboard remains usable with replacement P1 pad");
+	host_input_menu(1); press(replacement, SDL_GAMEPAD_BUTTON_SOUTH, true); host_input_menu(0); host_input_update();
+	host_input_key('C', 1); host_input_update();
+	require(host_input_read(0, &state) && state.Gamepad.bAnalogButtons[XBOX_BUTTON_X] && !state.Gamepad.bAnalogButtons[XBOX_BUTTON_A], "menu input cannot select gameplay device or leak held pad input");
+	press(replacement, SDL_GAMEPAD_BUTTON_SOUTH, false);
+	host_input_focus(0); host_input_key('C', 0); host_input_key('C', 1); host_input_update();
+	require(host_input_read(0, &state) && !state.Gamepad.bAnalogButtons[XBOX_BUTTON_X], "unfocused input is neutral");
+	host_input_focus(1); host_input_clear();
 	host_input_menu(1); press(first, SDL_GAMEPAD_BUTTON_WEST, true); require(host_input_read(1, &state) && !state.Gamepad.bAnalogButtons[XBOX_BUTTON_X], "launcher suppresses guest gameplay"); press(first, SDL_GAMEPAD_BUTTON_WEST, false);
 	int padType = host_input_type(1); host_capture_begin(1, padType, 11); press(first, SDL_GAMEPAD_BUTTON_EAST, true); require(!host_capture_active() && host_binding_get(1, padType, 11) == 101, "B button captured rather than Undo"); host_input_update(); require(host_binding_get(1, padType, 11) == 101, "captured held input does not self-undo"); press(first, SDL_GAMEPAD_BUTTON_EAST, false); press(first, SDL_GAMEPAD_BUTTON_NORTH, true); require(host_binding_get(1, padType, 11) == 103 && host_binding_get(1, padType, 9) == 101, "Undo follows remapped logical B"); press(first, SDL_GAMEPAD_BUTTON_NORTH, false);
 	host_capture_begin(0, host_input_type(0), 8); press(third, SDL_GAMEPAD_BUTTON_NORTH, false); press(third, SDL_GAMEPAD_BUTTON_SOUTH, true); require(host_capture_active(), "ignored third pad cannot capture bindings"); host_capture_cancel();
@@ -222,6 +262,10 @@ int main()
 	puts("launcher_check: INI");
 	wchar_t temp[MAX_PATH], path[MAX_PATH]; GetTempPathW(MAX_PATH, temp); GetTempFileNameW(temp, L"doa", 0, path); ini_path = path;
 	prefs = Preferences {}; require(save(), "atomic configuration save"); require(ini_syntax_valid(), "saved INI syntax");
+	require(!read_int(L"Borderless", 0, 1) && !read_int(L"FullScreen", 0, 1), "old configurations default to decorated windowed");
+	prefs.borderless = prefs.fullscreen = true; require(save(), "save window type settings");
+	require(read_int(L"Borderless", 0, 1) == 1 && read_int(L"FullScreen", 0, 1) == 1, "window type INI roundtrip");
+	prefs.borderless = prefs.fullscreen = false; require(save(), "restore windowed test settings");
 	host_binding_set(0, 0, 4, 'P'); require(save(), "save old provisional defaults"); require(host_input_load(path) && host_binding_get(0, 0, 4) == VK_RETURN, "old untouched defaults migrate Start to Enter");
 	host_binding_set(0, 0, 4, 'P'); host_binding_set(0, 0, 8, 'R'); require(save(), "save customized keyboard profile"); require(host_input_load(path) && host_binding_get(0, 0, 4) == 'P', "customized profiles retain user Start binding"); host_binding_defaults(0, 0); require(save(), "restore test defaults");
 	startup = true; visible = true; dismiss(false); require(startup && visible && !save_error, "first-run Save never starts gameplay");
@@ -242,6 +286,32 @@ int main()
 	WNDCLASSW wc = {}; wc.lpfnWndProc = DefWindowProcW; wc.hInstance = GetModuleHandleW(nullptr); wc.lpszClassName = L"DOA1ULauncherCheck"; RegisterClassW(&wc); HWND w = CreateWindowW(wc.lpszClassName, L"", WS_OVERLAPPEDWINDOW, 0, 0, 1296, 759, nullptr, nullptr, wc.hInstance, nullptr);
 	ID3D11Device* dev = nullptr; ID3D11DeviceContext* ctx = nullptr; require(SUCCEEDED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, 0, nullptr, 0, D3D11_SDK_VERSION, &dev, nullptr, &ctx)), "WARP device");
 	startup = true; visible = true; require(graphics_ui_init(w, dev, ctx) != 0, "UI initialization");
+	{
+		auto original = prefs;
+		DEVMODEW before = {}; before.dmSize = sizeof before;
+		require(EnumDisplaySettingsW(nullptr, ENUM_CURRENT_SETTINGS, &before), "current desktop mode");
+		startup = false;
+		for (int mode = 0; mode < 4; ++mode) {
+			prefs.fullscreen = (mode & 2) != 0; prefs.borderless = (mode & 1) != 0;
+			graphics_window_apply(w);
+			require(((GetWindowLongPtrW(w, GWL_STYLE) & WS_CAPTION) == 0) == prefs.borderless, "borderless controls decorations independently of fullscreen");
+			RECT outer, client; GetWindowRect(w, &outer); GetClientRect(w, &client);
+			MONITORINFO monitor = { sizeof monitor }; GetMonitorInfoW(selected_monitor(), &monitor);
+			if (prefs.fullscreen) {
+				RECT expected = prefs.borderless ? monitor.rcMonitor : monitor.rcWork;
+				require(EqualRect(&outer, &expected), "fullscreen uses desktop/work area without exclusive mode");
+			} else {
+				const Size& expected = prefs.aspect ? sizes169[prefs.window169] : sizes43[prefs.window43];
+				require(client.right == expected.w && client.bottom == expected.h, "windowed client size matches saved preset");
+			}
+			require(prefs.render43 == original.render43 && prefs.render169 == original.render169, "presentation mode preserves internal resolution");
+		}
+		prefs = original; graphics_window_apply(w);
+		DEVMODEW after = {}; after.dmSize = sizeof after;
+		require(EnumDisplaySettingsW(nullptr, ENUM_CURRENT_SETTINGS, &after) && before.dmPelsWidth == after.dmPelsWidth && before.dmPelsHeight == after.dmPelsHeight && before.dmDisplayFrequency == after.dmDisplayFrequency, "window type never changes desktop display mode");
+		startup = true;
+		SetWindowPos(w, nullptr, 0, 0, 1296, 759, SWP_NOZORDER | SWP_NOACTIVATE);
+	}
 	graphics_ui_message(w, WM_KEYDOWN, VK_F1, 0); require(visible, "F1 cannot dismiss launcher");
 	D3D11_TEXTURE2D_DESC td = {}; td.Width = 1280; td.Height = 720; td.ArraySize = td.MipLevels = 1; td.Format = DXGI_FORMAT_R8G8B8A8_UNORM; td.SampleDesc.Count = 1; td.BindFlags = D3D11_BIND_RENDER_TARGET; ID3D11Texture2D* image = nullptr; require(SUCCEEDED(dev->CreateTexture2D(&td, nullptr, &image)), "offscreen target"); ID3D11RenderTargetView* view = nullptr; dev->CreateRenderTargetView(image, nullptr, &view); ctx->OMSetRenderTargets(1, &view, nullptr);
 	for (page = 0; page < 3; ++page)
@@ -252,6 +322,14 @@ int main()
     screenshot(dev,ctx,image,L"launcher-graphics-options.png");prefs=savedGraphics;
     page=0;graphics_ui_draw();
     auto* root=ImGui::FindWindowByName("Dead or Alive: ULTIMATE PC Settings");
+	ImGuiWindow* displayContent = nullptr;
+	ImGuiWindow* windowType = nullptr;
+	for (auto* child : root->DC.ChildWindows)
+		if (strstr(child->Name, "/Settings content_")) displayContent = child;
+	require(displayContent && displayContent->ScrollMax.y == 0, "Display fits without vertical scrolling at 720p");
+	for (auto* child : displayContent->DC.ChildWindows)
+		if (strstr(child->Name, "/Window type row_")) windowType = child;
+	require(windowType != nullptr, "Window Type card exists above Aspect Ratio");
     ImGuiWindow* navigation=nullptr;
     for(auto* child:root->DC.ChildWindows)if(strstr(child->Name,"/Navigation_"))navigation=child;
     require(navigation!=nullptr,"sidebar navigation child");
@@ -264,6 +342,13 @@ int main()
         ImGui::GetIO().AddKeyEvent(key,true);graphics_ui_draw();
         ImGui::GetIO().AddKeyEvent(key,false);graphics_ui_draw();
     };
+    focus_item(windowType,"Full Screen"); key_press(ImGuiKey_Enter);
+    require(prefs.fullscreen, "Full Screen button selects desktop presentation");
+    focus_item(windowType,"##Borderless"); key_press(ImGuiKey_Space);
+    require(prefs.borderless && prefs.fullscreen, "Borderless checkbox independently changes decoration preference");
+    focus_item(windowType,"Windowed"); key_press(ImGuiKey_Enter);
+    require(!prefs.fullscreen && prefs.borderless, "Windowed preserves independent Borderless preference");
+    prefs.borderless = false; graphics_ui_draw();
     focus_item(navigation,"Display");
     key_press(ImGuiKey_Tab);
     require(ImGui::GetCurrentContext()->NavId==ImHashStr("Graphics",0,navigation->ID),"Tab reaches Graphics sidebar button");
@@ -271,7 +356,7 @@ int main()
     require(ImGui::GetCurrentContext()->NavId==ImHashStr("Controls",0,navigation->ID),"Tab reaches Controls sidebar button");
     key_press(ImGuiKey_Tab);
     auto* focusedWindow=ImGui::GetCurrentContext()->NavWindow;
-    require(focusedWindow!=navigation&&ImGui::GetCurrentContext()->NavId==ImHashStr("4:3",0,focusedWindow->ID),"Tab crosses sidebar into actual display controls");
+    require(focusedWindow!=navigation&&ImGui::GetCurrentContext()->NavId==ImHashStr("##Borderless",0,focusedWindow->ID),"Tab crosses sidebar into actual display controls");
     ImGui::GetIO().AddKeyEvent(ImGuiMod_Shift,true);key_press(ImGuiKey_Tab);ImGui::GetIO().AddKeyEvent(ImGuiMod_Shift,false);graphics_ui_draw();
     require(ImGui::GetCurrentContext()->NavId==ImHashStr("Controls",0,navigation->ID),"Shift Tab crosses display group back to sidebar");
     ImGui::GetIO().AddKeyEvent(ImGuiMod_Shift,true);key_press(ImGuiKey_Tab);ImGui::GetIO().AddKeyEvent(ImGuiMod_Shift,false);graphics_ui_draw();
@@ -289,6 +374,10 @@ int main()
 	}) == 1, "actual first-run Play exits launcher rendering");
 	HWND retained = (HWND)graphics_take_startup_window();
 	require(IsWindow(retained), "same startup HWND retained");
+	require(GetClassLongPtrW(retained, GCLP_HICON) != 0 && GetClassLongPtrW(retained, GCLP_HICONSM) != 0, "retained launcher/game window has embedded large and title-bar icons");
+	wchar_t versionedTitle[128] {};
+	GetWindowTextW(retained, versionedTitle, 128);
+	require(wcscmp(versionedTitle, DOA1U_WINDOW_TITLE_W) == 0, "launcher window title includes application version");
 	DWORD owner = GetWindowThreadProcessId(retained, nullptr);
 	require(owner != GetCurrentThreadId(), "dedicated window owner survives Play");
 	SetWindowLongPtrW(retained, GWLP_WNDPROC, (LONG_PTR)handoff_proc);
@@ -305,6 +394,45 @@ int main()
 	require(delivered_thread == GetCurrentThreadId() && visible, "queued F1 delivered on rendering thread");
 	graphics_ui_draw();
 	require(graphics_game_paused() && test_audio_paused, "F1 gates simulation and pauses audio");
+	auto menuPad = virtual_pad("DOA1U F1 menu controller");
+	host_input_focus(1); host_input_update(); graphics_ui_draw(); graphics_ui_draw();
+	press(menuPad, SDL_GAMEPAD_BUTTON_DPAD_DOWN, true);
+	graphics_ui_draw(); graphics_ui_draw();
+	require(ImGui::GetIO().BackendFlags & ImGuiBackendFlags_HasGamepad, "SDL menu controller remains available after Win32 NewFrame");
+	require(ImGui::IsKeyDown(ImGuiKey_GamepadDpadDown), "F1 menu receives SDL controller direction");
+	press(menuPad, SDL_GAMEPAD_BUTTON_DPAD_DOWN, false); graphics_ui_draw();
+	press(menuPad, SDL_GAMEPAD_BUTTON_SOUTH, true); graphics_ui_draw();
+	press(menuPad, SDL_GAMEPAD_BUTTON_SOUTH, false); graphics_ui_draw();
+	require(page == 1, "P1 controller navigates to and activates Graphics after F1");
+	graphics_ui_draw();
+	require(strstr(ImGui::GetCurrentContext()->NavWindow->Name, "/Settings content_") != nullptr,
+		"activating Graphics transfers controller focus into its panel");
+	auto pad_click = [&](int button) {
+		press(menuPad, button, true); graphics_ui_draw(); graphics_ui_draw();
+		press(menuPad, button, false); graphics_ui_draw(); graphics_ui_draw();
+	};
+	pad_click(SDL_GAMEPAD_BUTTON_DPAD_LEFT);
+	auto* sidebar = ImGui::GetCurrentContext()->NavWindow;
+	require(strstr(sidebar->Name, "/Navigation_") != nullptr, "Left returns from settings to sidebar");
+	for (int target : { 0, 2 }) {
+		focus_item(sidebar, target == 0 ? "Display" : "Controls");
+		pad_click(SDL_GAMEPAD_BUTTON_SOUTH);
+		require(page == target && ImGui::GetCurrentContext()->NavWindow != sidebar,
+			"controller activation enters Display and Controls panels");
+	}
+	device_type = 0;
+	for (int step = 0; step < 6 && !host_capture_active(); ++step) {
+		pad_click(SDL_GAMEPAD_BUTTON_DPAD_DOWN);
+		pad_click(SDL_GAMEPAD_BUTTON_SOUTH);
+	}
+	require(host_capture_active() && capture_player == 0, "controller can navigate to and activate a P1 binding");
+	int assignedRow = capture_row;
+	graphics_ui_message(retained, WM_KEYDOWN, 'Z', 0); graphics_ui_draw();
+	graphics_ui_message(retained, WM_KEYUP, 'Z', 0); graphics_ui_draw();
+	require(!host_capture_active() && host_binding_get(0, 0, assignedRow) == 'Z',
+		"controller-selected binding accepts a new keyboard key");
+	require(host_input_read(0, &state) && !state.Gamepad.wButtons && !state.Gamepad.bAnalogButtons[XBOX_BUTTON_A], "F1 controller navigation remains suppressed in guest");
+	SDL_CloseJoystick(menuPad.joystick); SDL_DetachVirtualJoystick(menuPad.id); host_input_update(); host_input_disconnected();
 	HANDLE waiting = CreateEventW(nullptr, FALSE, FALSE, nullptr);
 	HANDLE waiter = CreateThread(nullptr, 0, [](void* event)->DWORD
 	{

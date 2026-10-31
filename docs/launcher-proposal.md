@@ -1,5 +1,21 @@
 # DOA1U launcher proposal
 
+## Window Type delivered - 2026-10-31
+
+Display now starts with Window Type: Borderless label to the left of its
+checkbox, independent Windowed / Full Screen selected-state buttons. Window
+size/Internal Resolution/Monitor rows reduced to44px; aspect row66px and
+window-type64px fit the720p page without scrolling. Full Screen is desktop
+presentation, never exclusive mode: bordered fills selected monitor work area
+like a maximized window; borderless fills its entire monitor rectangle.
+Windowed restores selected size and previous placement (clamped to monitor).
+Window Size disabled in Full Screen; Internal Resolution stays independent.
+Settings persist as Borderless/FullScreen (0/1), default0 for existing INIs.
+First-run stays fixed launcher until Play; gameplay/F1 changes apply live.
+Supersedes older rejection of window-mode controls below. Hidden suite and
+visual layout check PASS; actual game transitions await user testing.
+
+
 Status: implemented, pending manual in-game/device acceptance testing.
 
 ## Implementation handoff — 2026-10-30
@@ -21,7 +37,7 @@ blindly resumed. Original-game pause eligibility is retained, not replaced with
 a host simulation freeze. Runtime backend choices remain deferred until restart.
 
 Monitor device names persist independently of OS-controlled GPU selection.
-SDL3 3.4.18 is pinned/vendored; distribute `SDL3.dll` beside the executable.
+SDL3 3.4.18 is pinned as unmodified upstream source and statically linked with controller-focused options. No SDL3 DLL is needed. See src/controller/README.md and src/third_party/SDL3/README.md.
 The port-owned runtime override now routes both guest controller handles to
 distinct host slots rather than hardcoding every guest read to port zero.
 
@@ -155,13 +171,18 @@ No manual device dropdown is currently requested.
 
 ### Input priority and menu navigation
 
-- Controllers take priority over keyboard for gameplay. When a controller is
-  identified/available, keyboard is not a gameplay input source except the host
-  shortcuts: **Esc restarts the game**, **F1 opens the launcher**. Enter is a
-  normal keyboard gameplay binding, defaulting to Xbox Start.
-  Do not merge keyboard gameplay input into a connected controller's state.
+- Keyboard and P1's assigned controller share guest port P1. A new mapped
+  keyboard press or P1 pad button/deliberate axis engagement selects that device.
+  Output replaces, never merges, the previous device's held controls. Repeats,
+  releases, held pad inputs, stick drift, menu activity and Esc/F1 do not select
+  a gameplay device. Axis activation/release uses hysteresis (20000/12000).
+  Enter remains an ordinary Start binding. P2 is controller-only; its activity
+  never changes P1 ownership. Physical slots retain join/hotplug rules while
+  keyboard controls P1. Disconnect still requests pause; keyboard keeps guest
+  P1 available, and replacement pads need new input to take over.
+  **Esc restarts the game**, **F1 opens the launcher**.
 - The launcher supports **controller, mouse and keyboard navigation**, including
-  when a controller is connected. Gameplay suppression does not disable launcher
+  when a controller is connected. Gameplay device selection does not disable launcher
   keyboard navigation. Enter activates the highlighted button unless a binding
   field is awaiting capture, in which case Enter is assigned to that field.
 - No unbound targets and no multiple bindings: each target has exactly one

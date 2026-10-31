@@ -1,4 +1,33 @@
-// Lowest icon resource ID is used by Windows for the executable's icon.
-1 ICON "DOA1U.ico"
+#include <winver.h>
+#include "app_version.h"
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION DOA1U_VERSION_NUMERIC
+ PRODUCTVERSION DOA1U_VERSION_NUMERIC
+ FILEFLAGSMASK VS_FFI_FILEFLAGSMASK
+ FILEFLAGS 0
+ FILEOS VOS_NT_WINDOWS32
+ FILETYPE VFT_APP
+ FILESUBTYPE 0
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904b0"
+        BEGIN
+            VALUE "FileDescription", "Dead or Alive 1: ULTIMATE\0"
+            VALUE "FileVersion", DOA1U_VERSION_STRING "\0"
+            VALUE "InternalName", "doa1u_recomp\0"
+            VALUE "OriginalFilename", "doa1u_recomp.exe\0"
+            VALUE "ProductName", "Dead or Alive 1: ULTIMATE\0"
+            VALUE "ProductVersion", DOA1U_VERSION_STRING "\0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0409, 1200
+    END
+END
+
+// Icon resource 1 is linked separately from resources/app_icon.res.
 201 RCDATA "../docs/assets/launcher-background.png"
 202 RCDATA "../docs/assets/launcher-final-mockup-v3.png"

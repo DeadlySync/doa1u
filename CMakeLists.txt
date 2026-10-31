@@ -37,8 +37,7 @@ foreach(feature WGPU METAL NONE NVTX NVAPI AMDAGS AGILITY_SDK NIS_SDK NGX_SDK FF
 endforeach()
 add_subdirectory(src/third_party/NRI)
 if(NOT CMAKE_SCRIPT_MODE_FILE)
-    set(SDL3_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src/third_party/SDL3-vendor/SDL3-3.4.18/cmake")
-    find_package(SDL3 3.4.18 EXACT CONFIG REQUIRED)
+    include(cmake/ControllerSDL.cmake)
 endif()
 if(NOT CMAKE_SCRIPT_MODE_FILE)
     include(cmake/NriSpirv.cmake)
@@ -46,8 +45,14 @@ endif()
 
 # Generated code stays in its recompiler-owned directory.
 file(GLOB RECOMP_GEN_SOURCES CONFIGURE_DEPENDS "src/recomp/gen/*.c")
+if(MSVC AND NOT CMAKE_SCRIPT_MODE_FILE)
+    set_source_files_properties(${RECOMP_GEN_SOURCES}
+        PROPERTIES COMPILE_OPTIONS "/FI${CMAKE_CURRENT_SOURCE_DIR}/src/render/fighters/collision_watch.h")
+endif()
 set(GAME_SOURCES
     src/main.c
+    src/game/training_stage_change.c
+    src/game/throw_move_lookup.c
     src/runtime/recomp_manual.c
     src/runtime/fix_fiber_runtime.c
     src/runtime/reach_gameplay_shims.c
@@ -58,7 +63,7 @@ set(GAME_SOURCES
     src/frontend/front_end_menu_tick.c
     src/frontend/state_machine.c
     src/frontend/frontend_pre.c
-    src/frontend/host_input.cpp
+    src/controller/host_input.cpp
     src/frontend/launcher_art.cpp
     src/frontend/launcher_startup.cpp
     src/render/d3d8/fix_d3d8_state.c
@@ -94,6 +99,7 @@ add_executable(${PROJECT_NAME} WIN32 ${GAME_SOURCES} ${RECOMP_GEN_SOURCES})
 if(WIN32)
     enable_language(RC)
     target_sources(${PROJECT_NAME} PRIVATE src/app.rc)
+    target_link_libraries(${PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/resources/app_icon.res")
 endif()
 add_library(doa1u_imgui STATIC
     src/third_party/imgui/imgui.cpp
@@ -103,18 +109,22 @@ add_library(doa1u_imgui STATIC
     src/third_party/imgui/backends/imgui_impl_win32.cpp
     src/third_party/imgui/backends/imgui_impl_dx11.cpp)
 target_include_directories(doa1u_imgui PUBLIC src/third_party/imgui)
+# SDL owns controller routing and menu suppression. Do not let Win32's separate
+# XInput polling overwrite its HasGamepad flag or inject unfiltered pad input.
+target_compile_definitions(doa1u_imgui PRIVATE IMGUI_IMPL_WIN32_DISABLE_GAMEPAD)
 target_link_libraries(doa1u_imgui PRIVATE d3d11 d3dcompiler dwmapi)
 # Offline reusable decoder check; never linked into the game.
 add_executable(audio_bank_check EXCLUDE_FROM_ALL
     tools/audio_bank_check.c src/audio/xbox_adpcm.c)
 add_executable(launcher_check EXCLUDE_FROM_ALL tools/launcher_check.cpp
-    src/frontend/host_input.cpp src/frontend/launcher_art.cpp src/app.rc)
+    src/controller/host_input.cpp src/frontend/launcher_art.cpp src/app.rc)
+target_link_libraries(launcher_check PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/resources/app_icon.res")
 target_include_directories(launcher_check PRIVATE src
     "${DOA1U_XBOXRECOMP_RUNTIME_DIR}/src"
     "${DOA1U_XBOXRECOMP_RUNTIME_DIR}/include"
     "${DOA1U_XBOXRECOMP_RUNTIME_DIR}/src/input"
     "${DOA1U_XBOXRECOMP_RUNTIME_DIR}/src/kernel")
-target_link_libraries(launcher_check PRIVATE NRI doa1u_imgui SDL3::SDL3 windowscodecs ole32 d3d11 dxgi)
+target_link_libraries(launcher_check PRIVATE NRI doa1u_imgui SDL3::SDL3-static windowscodecs ole32 d3d11 dxgi)
 target_include_directories(audio_bank_check PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 # WARP-only AA shader/readback regression: no window, game, or hardware GPU.
 add_executable(antialiasing_check EXCLUDE_FROM_ALL tools/antialiasing_check.cpp)
@@ -126,14 +136,8 @@ add_executable(widescreen_shadow_check EXCLUDE_FROM_ALL
 target_include_directories(widescreen_shadow_check PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/src" "${DOA1U_XBOXRECOMP_RUNTIME_DIR}/src/kernel")
 target_link_libraries(${PROJECT_NAME} PRIVATE xboxrecomp doa1u_imgui NRI
-    SDL3::SDL3 windowscodecs ole32 d3d11 dxgi dxguid d3dcompiler xinput winmm dbghelp)
+    SDL3::SDL3-static windowscodecs ole32 d3d11 dxgi dxguid d3dcompiler xinput winmm dbghelp)
 target_include_directories(${PROJECT_NAME} PRIVATE "${DOA1U_XBOXRECOMP_RUNTIME_DIR}/src/input")
-if(NOT CMAKE_SCRIPT_MODE_FILE)
-    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:SDL3::SDL3>" "$<TARGET_FILE_DIR:${PROJECT_NAME}>")
-    add_custom_command(TARGET launcher_check POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:SDL3::SDL3>" "$<TARGET_FILE_DIR:launcher_check>")
-endif()
 if(DOA1U_DIAGNOSTIC)
     target_compile_definitions(${PROJECT_NAME} PRIVATE DOA1U_DIAGNOSTIC)
     if(RECOMP_WITH_RENDERDOC)
@@ -174,3 +178,13 @@ if(NOT CMAKE_SCRIPT_MODE_FILE)
         target_include_directories(${target} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
     endforeach()
 endif()
+
+# Offline regression for the recovered training-menu interior switch target.
+add_executable(throw_move_lookup_check EXCLUDE_FROM_ALL
+    tools/throw_move_lookup_check.c src/game/throw_move_lookup.c)
+target_include_directories(throw_move_lookup_check PRIVATE src)
+
+add_executable(training_stage_change_check EXCLUDE_FROM_ALL
+    tools/training_stage_change_check.c src/game/training_stage_change.c
+    src/runtime/recomp_manual.c)
+target_include_directories(training_stage_change_check PRIVATE src)

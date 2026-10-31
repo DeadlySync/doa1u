@@ -9,6 +9,7 @@
 
 extern void sub_000689E0_gen(void);   /* frame_end (generated body)              */
 extern void sub_00052240_gen(void);   /* register_task_fiber(id, fn) (generated) */
+extern void fighter_collision_trace_frame(uint64_t frame);
 
 /* main-loop frames since first tick; owned here so every module shares one clock */
 uint64_t g_gd_frame = 0;
@@ -177,6 +178,7 @@ static void gd_run_frame_modules(uint64_t frame)
 {
 	audio_frame_module(frame);
 	game_mode_frame_module(frame);
+	fighter_collision_trace_frame(frame);
 }
 
 /* shadow: frame_end -- the per-frame GUEST-CONTEXT hook (main fiber, valid

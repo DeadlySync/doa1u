@@ -269,6 +269,7 @@ typedef struct {
     uint32_t border;                    /* SET_TEXTURE_BORDER_COLOR      */
     int      border_color;              /* FORMAT: BORDER reads `border` */
     int      cube;                      /* FORMAT: six faces, not one    */
+    int      enabled;                    /* CONTROL0 bit 30, independent of binding */
     int      valid;
 } Texture;
 
@@ -406,7 +407,7 @@ static int tex_size_from_format(uint32_t fmt)
 
 static void tex_update_valid(Texture *t)
 {
-    t->valid = t->offset && t->width && t->height
+    t->valid = t->enabled && t->offset && t->width && t->height
             && (tex_size_from_format(t->color) || t->pitch);
 }
 
@@ -885,6 +886,7 @@ int nv2a_backend_decode_texture(const Nv2aTexture *tex, uint32_t *argb_out)
     s_gpu.texs[0].levels = 1;
     s_gpu.texs[0].filter = 0;
     s_gpu.texs[0].cube   = 0;
+    s_gpu.texs[0].enabled = 1; /* Explicit offline texture decode, not a guest draw. */
     s_gpu.texs[0].valid  = 1;
     for (y = 0; y < tex->height && ok; y++)
         for (x = 0; x < tex->width; x++)
@@ -3678,6 +3680,9 @@ static void tex_stage_method(uint32_t method, uint32_t param)
          * (the border colour when FORMAT selects it, else clamped). */
         t->addr_u =  param        & 0xF;
         t->addr_v = (param >>  8) & 0xF;
+        break;
+    case 0x1B0C: /* SET_TEXTURE_CONTROL0: disabling retains the binding. */
+        t->enabled = (param & (1u << 30)) != 0;
         break;
     case NV097_SET_TEXTURE_CONTROL1:
         t->pitch = param >> 16;          /* linear formats only */

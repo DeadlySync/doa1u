@@ -28,6 +28,10 @@ __declspec(noinline) static double math_work(double x) {
     return ldexp(floor(x)+ceil(x)+fmod(x,7.0),3);
 }
 static void task_body(void) {
+    NT_TIB *tib=(NT_TIB *)NtCurrentTeb();
+    MEMORY_BASIC_INFORMATION guard;
+    require(VirtualQuery((char *)tib->StackLimit-1,&guard,sizeof guard)==sizeof guard);
+    require((guard.Protect&PAGE_GUARD)!=0);
     volatile uint64_t canary[32];
     for (unsigned j=0;j<32;j++) canary[j]=0xC0FFEE1234560000ull+j;
     for (;;) {

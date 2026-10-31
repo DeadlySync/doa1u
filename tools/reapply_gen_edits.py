@@ -647,6 +647,27 @@ def main():
         print("  MISSING  constant-stack game loop: %s" % exc)
         missing += 1
 
+    from fix_audio_wait_cycle import apply as apply_audio_wait_cycle
+    try:
+        apply_audio_wait_cycle(files, args.dry_run)
+    except ValueError as exc:
+        print("  MISSING  constant-stack audio wait: %s" % exc)
+        missing += 1
+
+    from fix_training_loop_cycle import apply as apply_training_loop_cycle
+    try:
+        apply_training_loop_cycle(files, args.dry_run)
+    except ValueError as exc:
+        print("  MISSING  constant-stack Training: %s" % exc)
+        missing += 1
+
+    from fix_task_frame_cycle import apply as apply_task_frame_cycle
+    try:
+        apply_task_frame_cycle(files, args.dry_run)
+    except ValueError as exc:
+        print("  MISSING  constant-stack task frame: %s" % exc)
+        missing += 1
+
     print("\n%d applied, %d already-present, %d MISSING" % (applied, skipped, missing))
     print("(%d deferred patch(es) held out of the active set -- see DEFERRED_PATCHES)"
           % len(DEFERRED_PATCHES))

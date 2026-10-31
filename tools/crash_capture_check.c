@@ -10,9 +10,10 @@
 int main(int argc, char **argv)
 {
     int known_read = argc > 1 && strcmp(argv[1], "--known-read") == 0;
+    int crt_read = argc > 1 && strcmp(argv[1], "--crt-read") == 0;
     /* Separate process: exercise the actual last-chance filter, not a direct
      * helper call. Parent/checker inspects the emitted dump offline. */
-    if (argc > 1 && !known_read) {
+    if (argc > 1 && !known_read && !crt_read) {
         SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
         crash_capture_init();
         RaiseException(0xE042444F, EXCEPTION_NONCONTINUABLE, 0, NULL);
@@ -28,7 +29,18 @@ int main(int argc, char **argv)
     context.Rip = 0;
     crash_capture_init();
     if (crash_capture_null_execute(&pointers)) return 1;
-    if (known_read) {
+    if (crt_read) {
+        context.Rip = 0x1234;
+        if (crash_capture_crt_read(&pointers)) return 2;
+        context.Rip = (DWORD64)GetProcAddress(GetModuleHandleW(L"ucrtbase.dll"), "strchr");
+        if (!context.Rip) return 8;
+        record.ExceptionAddress = (void *)context.Rip;
+        record.ExceptionInformation[0] = 1;
+        if (crash_capture_crt_read(&pointers)) return 2;
+        record.ExceptionInformation[0] = 0;
+        if (crash_capture_crt_read(&pointers)) return 2;
+        if (!crash_capture_crt_read(&pointers)) return 3;
+    } else if (known_read) {
         context.Rip = 0x1234;
         record.ExceptionAddress = (void *)0x1234;
         record.ExceptionInformation[1] = 0x1998A0C;
@@ -57,15 +69,16 @@ int main(int argc, char **argv)
                                          (void **)&exception, &size)) return 5;
     int valid = exception->ThreadId == GetCurrentThreadId()
         && exception->ExceptionRecord.ExceptionCode == EXCEPTION_ACCESS_VIOLATION
-        && exception->ExceptionRecord.ExceptionAddress == (known_read ? 0x1234 : 0)
-        && exception->ExceptionRecord.ExceptionInformation[0] == (known_read ? 0 : 8);
+        && exception->ExceptionRecord.ExceptionAddress == context.Rip
+        && exception->ExceptionRecord.ExceptionInformation[0] == (known_read || crt_read ? 0 : 8);
     CONTEXT *saved = (CONTEXT *)((char *)view + exception->ThreadContext.Rva);
     valid = valid && saved->Rip == context.Rip && saved->Rsp == context.Rsp;
     UnmapViewOfFile(view);
     CloseHandle(mapping);
     CloseHandle(file);
     if (!valid) return 6;
-    puts(known_read ? "PASS native dump: explicitly identified read fault, original thread/context, repeat suppression"
+    puts(crt_read ? "PASS CRT read dump: original context, repeat suppression, guest-code and write exclusion"
+        : known_read ? "PASS native dump: explicitly identified read fault, original thread/context, repeat suppression"
         : "PASS native dump: first NULL execute, original thread/context, repeat suppression, read-fault exclusion");
     return 0;
 }

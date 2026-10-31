@@ -186,3 +186,51 @@ Adapter moved to src/controller. Pinned unmodified SDL 3.4.18 upstream source is
 ### Controllers branch completion - 0.9.0 (2026-10-31)
 
 User confirmed all tested controllers are working after the static SDL integration and F1 panel-navigation fixes. Release version is 0.9.0, shared by VERSIONINFO and startup/NRI/legacy window titles. This closes the controllers implementation milestone; no Git identifier or auto-increment counter is embedded.
+
+### Debug baseline mirrors Release (2026-10-31)
+
+cmake/MirrorReleaseToDebug.cmake copies Release compiler/resource/linker flags to Debug and mirrors configuration-specific target options across runtime, NRI, SDL and app targets without editing upstream sources. Debug uses the Release CRT/optimization and existing symbol/crash-stack options. Output directories remain separate; DOA1U_DIAGNOSTIC is independent. After configuring, run: python tools/check_build_configs.py build. The check compares compiler/linker/resource properties across 31 generated x64 projects (only configuration identities and output locations differ), and verifies SDL generated headers are identical. Diagnostic OFF/ON source-selection checks pass.
+
+Verified: Debug launcher_check passes across D3D11/D3D12/Vulkan; Debug game EXE and matching PDB build successfully. Import inspection shows no debug CRT or SDL DLL dependency. Existing XISO Release deployment left unchanged.
+
+### Final Debug/Release separation (2026-10-31, supersedes the copied baseline)
+
+Debug is now /Od /Ob0 /Zi /Oy-, debug CRT, full PDB, no incremental linking, NOREF/NOICF and no IPO. Release remains the original /O2 /Ob2; proposed /Ob3 tuning removed. All 31 generated project settings checked. Debug launcher_check and game EXE/PDB build passed. Offline DbgHelp resolves WinMain and sub_000570E0 with source lines from the matching PDB. Use Debug for all future debugging. XISO not replaced. SDL keeps its prior release assertion level because enabling debug-only assertions exposes the existing startup/render-thread event-pump handoff; details in docs/build-configurations.md.
+
+
+### Release without PDBs (2026-10-31)
+
+Release compiler/linker symbols disabled, including inherited NRI options; /O2 /Ob2 retained. All 31 generated configurations pass checks. Full Release game build created no PDB; PE contains no CodeView/PDB reference (only non-symbol POGO metadata). EXE deployed to XISO with SHA256 match; stale Release PDBs archived outside build/deployment. Debug offline DbgHelp still resolves WinMain and sub_000570E0 with source lines.
+
+
+### User-run training crash capture (2026-10-31)
+
+capture_training_crash.ps1 -PrepareOnly passes. CDB synthetic second-chance exception test successfully writes full dump. XISO batch wrapper installed; actual game reproduction pending. Debug training entry currently exits without a native logger report or dump; not established to be the original Release fault.
+
+Capture correction: explicit sxd av is required (sxd * alone left default AV first-chance breaks). Added -o, sxi ibp/epr to follow restarted children. Full production command-file test with capture_debugger_check.c passes: expected parent/child AVs reach handlers; parent exits; child fatal E0424450 captured SECOND CHANCE. Earlier game dumps were expected startup APU reads, NOT the Training crash.
+
+Capture AC97 correction: sxi sse swallowed the runtime TF event, causing startup reset-bit loop. Use sxe -c "gn" sse. Synthetic production-command test now verifies single-step delivery in parent and child, expected AV forwarding, child fatal capture; PASS. Frozen game hang evidence saved and owned process closed. Actual Training failure remains uncaptured.
+
+
+### Debug audio wait stack exhaustion (2026-10-31)
+
+Training dump164448 shows 1B559F/1B55A6 recursion consuming >1MiB fiber allocation. Guest jump cycle now one native activation. Production-body /Od /Ob0 harness passes 1M polls from all3 entries with zero native stack growth, correct guest state and bypass cases. Debug built/deployed EXE+PDB hash checked; source symbols pass. Physical Training retest pending; original Release CRT fault not yet linked.
+
+
+### Training frame-cycle native recursion (2026-10-31)
+
+Capture164832-606 shows corrupt RET in task11 and neighboring task12 saved context with hundreds of44320/445DF frames. Entire44320/443A0/445DF tail-cycle now local continuation dispatcher. Actual production-body /Od/Ob0 harness passes1Mframes per3entries, stackvariation608/624/608bytes, stable guestESP. Debug rebuilt/deployed pair hashes checked, source symbols pass. Physical retest pending; Release failure not conclusively linked.
+
+### Task frame cycle and native stack guards (2026-10-31)
+
+Capture training-capture-20261031-165347-983: second-chance execute AV at RIP6. Task9 native RSP F38FFAB8 is below its entire F3900000..F3A00000 allocation. Captured native stack contains about675 repetitions of 166B0/167F0/16AC4. Converted only their three verified guest tail edges into a local constant-stack dispatcher; real calls and public entry points preserved. Reapply helper validates exact edges and is idempotent. Actual-production-body /Od /Ob0 harness passes1M frames from each entry, native stack span48 bytes, stable guestESP.
+
+CreateFiber(1MiB) committed the full reservation without a remaining growth guard. Use CreateFiberEx(64KiB initial commit, same1MiB reservation) to restore guarded growth. Production-fiber harness asserts PAGE_GUARD below StackLimit and passes400000 switches plus256 task lifecycles. Debug game rebuilt; source-symbol checks pass; EXE/PDB deployed to XISO with matching hashes. Physical Training retest pending. Original Release UCRT read has not been conclusively linked.
+
+### Release deployment after Training fixes (2026-10-31 17:07)
+
+User reports Debug Training no longer crashed in their retest (provisional fix). Requested Release built successfully with all audio/Training/task-frame constant-stack fixes and guarded native fibers. Configuration check passes31 targets: Release /O2 /Ob2, no PDB or PE CodeView reference. XISO executable replaced and SHA256 verified65A4362731920FE1FABEF96D645EE22E75665FD8D1EA9D2519A21071FA727464. Previous matching Debug EXE/PDB archived at workspace symbol-archive/debug-before-release-20261031-170708. Release gameplay retest pending.
+
+### v0.9.1 completion (2026-10-31)
+
+User confirmed the optimized Release build works in gameplay after the Training stack-cycle repairs. Version bumped to0.9.1 via app_version.h, shared by VERSIONINFO and window titles.

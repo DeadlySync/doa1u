@@ -10195,27 +10195,11 @@ loc_001B559D: ;
  * CC: cdecl, 0 params, returns int_or_void
  * Frame: fpo_leaf
  */
-void sub_001B559F(void)
-{
-    uint32_t ebp = 0;
-    ebp = g_ebp;  /* frameless: caller's frame */
-    ebp = g_seh_ebp; /* fpo_leaf: inherit caller's frame */
-
-loc_001B559F: ;
-    ecx = esi;
-    PUSH32(esp, 0x001B55A6u); RECOMP_ABI_CALL(0x001B4903u, sub_001B4903); /* call 0x001B4903 */
-
-    g_seh_ebp = ebp; sub_001B55A6(); return; /* fallthrough 0x001B55A6 */
-
-}
-
-/**
- * sub_001B55A6
- * Original: 0x001B55A6 - 0x001B55AE (8 bytes, 2 insns)
- * CC: cdecl, 0 params, returns int_or_void
- * Frame: fpo_leaf
- */
-void sub_001B55A6(void)
+/* GEN-EDIT: constant-stack audio wait 001B559F/001B55A6. Guest jumps must not depend on tail-call optimization. */
+static void audio_wait_cycle(int poll_first);
+void sub_001B559F(void) { audio_wait_cycle(1); }
+void sub_001B55A6(void) { audio_wait_cycle(0); }
+static void audio_wait_cycle(int poll_first)
 {
     uint32_t ebp = 0;
     ebp = g_ebp;  /* frameless: caller's frame */
@@ -10225,10 +10209,18 @@ void sub_001B55A6(void)
     (void)_fa; (void)_fb; (void)_fas; (void)_fbs;
     ebp = g_seh_ebp; /* fpo_leaf: inherit caller's frame */
 
+    if (!poll_first) goto loc_001B55A6;
+audio_wait_poll: ;
+loc_001B559F: ;
+    ecx = esi;
+    PUSH32(esp, 0x001B55A6u); RECOMP_ABI_CALL(0x001B4903u, sub_001B4903); /* call 0x001B4903 */
+
+    g_seh_ebp = ebp;
+
 loc_001B55A6: ;
     _fa = (uint32_t)(MEM16(esi + 0x12)) & 0xFFFFu; _fb = (uint32_t)(0x8000) & 0xFFFFu;
     _fas = (int32_t)(int16_t)(_fa); _fbs = (int32_t)(int16_t)(_fb); /* test MEM16(esi + 0x12), 0x8000 (16-bit) */
-    if (TEST_NZ(_fa, _fb)) { g_seh_ebp = ebp; sub_001B559F(); return; } /* jne: not equal / not zero */
+    if (TEST_NZ(_fa, _fb)) { g_seh_ebp = ebp; goto audio_wait_poll; } /* jne: not equal / not zero */
 
     g_seh_ebp = ebp; sub_001B55AE(); return; /* fallthrough 0x001B55AE */
 

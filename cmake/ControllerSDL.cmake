@@ -5,6 +5,11 @@ set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
 set(SDL_TESTS OFF CACHE BOOL "" FORCE)
 set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(SDL_INSTALL OFF CACHE BOOL "" FORCE)
+# Preserve the assertion level of the previously shipped Release SDL build.
+# The existing startup/render thread handoff trips SDL's debug-only main-thread
+# pump assertion; do not change input behavior as part of compiler configuration.
+# SDL sources still compile with Debug /Od /Ob0 and full symbols.
+set(SDL_ASSERTIONS release CACHE STRING "Existing SDL assertion behavior" FORCE)
 foreach(subsystem AUDIO VIDEO GPU RENDER CAMERA HAPTIC POWER SENSOR DIALOG TRAY)
     set(SDL_${subsystem} OFF CACHE BOOL "" FORCE)
 endforeach()

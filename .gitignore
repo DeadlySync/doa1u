@@ -243,3 +243,11 @@ Thumbs.db
 !/tools/capture_collision.bat
 !/tools/throw_move_lookup_check.c
 !/tools/throw_attach.cdb
+
+# Reproducible Training stack repairs and debugger capture tools
+!/tools/fix_audio_wait_cycle.py
+!/tools/fix_training_loop_cycle.py
+!/tools/fix_task_frame_cycle.py
+!/tools/capture_training_crash.ps1
+!/tools/capture_training_crash.bat
+!/tools/capture_debugger_check.c

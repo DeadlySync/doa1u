@@ -228,9 +228,11 @@ void create_fiber(void)
         f->start_routine = start_routine;
         f->param = param;
         f->started = 0;
-        /* Generous native stack: the start routine drives deep recompiled C
-         * call chains (render, audio, menus). */
-        f->host_fiber = CreateFiber(1u << 20, fiber_trampoline, f);
+        /* Preserve the 1 MiB limit but let Windows grow committed pages behind
+         * a guard. Fully committing the entire reserve with CreateFiber(1MiB)
+         * leaves no growth/guard region; deep translated chains can run into
+         * an adjacent fiber allocation and corrupt suspended return addresses. */
+        f->host_fiber = CreateFiberEx(64u << 10, 1u << 20, 0, fiber_trampoline, f);
         if (!f->host_fiber)
             fprintf(stderr, "[FIBER] CreateFiber failed for 0x%08X\n", gstruct);
     }

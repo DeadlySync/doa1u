@@ -9474,7 +9474,26 @@ loc_0004431A: ;
  * CC: cdecl, 0 params, returns int_zero
  * Frame: fpo_leaf
  */
-void sub_00044320(void)
+/* GEN-EDIT: constant-stack training 44320/443A0/445DF. Native recursion is not a guest jump. */
+static void training_body_00044320(uint32_t *next);
+static void training_body_000443A0(uint32_t *next);
+static void training_body_000445DF(uint32_t *next);
+static void training_cycle(uint32_t entry)
+{
+    while (entry) {
+        uint32_t next = 0;
+        switch (entry) {
+        case 0x00044320u: training_body_00044320(&next); break;
+        case 0x000443A0u: training_body_000443A0(&next); break;
+        case 0x000445DFu: training_body_000445DF(&next); break;
+        }
+        entry = next;
+    }
+}
+void sub_00044320(void) { training_cycle(0x00044320u); }
+void sub_000443A0(void) { training_cycle(0x000443A0u); }
+void sub_000445DF(void) { training_cycle(0x000445DFu); }
+static void training_body_00044320(uint32_t *next)
 {
     uint32_t ebp = 0;
     ebp = g_ebp;  /* frameless: caller's frame */
@@ -9510,7 +9529,7 @@ loc_00044342: ;
     _fas = (int32_t)(int8_t)(_fa); _fbs = (int32_t)(int8_t)(_fb); /* cmp MEM8(0x3139CB), 1 (8-bit) */
     SET_LO8(ecx, MEM8(0x30AE36));
     MEM8(esp + 0x13) = LO8(ecx);
-    if (CMP_NE(_fa, _fb)) { g_seh_ebp = ebp; sub_000445DF(); return; } /* jne: not equal / not zero */
+    if (CMP_NE(_fa, _fb)) { g_seh_ebp = ebp; *next = 0x000445DFu; return; } /* jne: not equal / not zero */
 
 loc_00044359: ;
     PUSH32(esp, 0x0004435Eu); RECOMP_ABI_CALL(0x00076630u, sub_00076630); /* call 0x00076630 */
@@ -9527,7 +9546,7 @@ loc_00044363: ;
 loc_0004436F: ;
     _fa = (uint32_t)(MEM8(0x3139CB)) & 0xFFu; _fb = (uint32_t)(1) & 0xFFu;
     _fas = (int32_t)(int8_t)(_fa); _fbs = (int32_t)(int8_t)(_fb); /* cmp MEM8(0x3139CB), 1 (8-bit) */
-    if (CMP_NE(_fa, _fb)) { g_seh_ebp = ebp; sub_000445DF(); return; } /* jne: not equal / not zero */
+    if (CMP_NE(_fa, _fb)) { g_seh_ebp = ebp; *next = 0x000445DFu; return; } /* jne: not equal / not zero */
 
 loc_0004437C: ;
     PUSH32(esp, 0x00044381u); RECOMP_ABI_CALL(0x00072220u, sub_00072220); /* call 0x00072220 */
@@ -9535,7 +9554,7 @@ loc_0004437C: ;
 loc_00044381: ;
     _fa = (uint32_t)(eax) & 0xFFFFFFFFu; _fb = (uint32_t)(5) & 0xFFFFFFFFu;
     _fas = (int32_t)(int32_t)(_fa); _fbs = (int32_t)(int32_t)(_fb); /* cmp eax, 5 (32-bit) */
-    if (CMP_NE(_fa, _fb)) { g_seh_ebp = ebp; sub_000445DF(); return; } /* jne: not equal / not zero */
+    if (CMP_NE(_fa, _fb)) { g_seh_ebp = ebp; *next = 0x000445DFu; return; } /* jne: not equal / not zero */
 
 loc_0004438A: ;
     PUSH32(esp, 0x0004438Fu); RECOMP_ABI_CALL(0x00072660u, sub_00072660); /* call 0x00072660 */
@@ -9544,7 +9563,7 @@ loc_0004438F: ;
     esi = eax;
     _fa = (uint32_t)(esi) & 0xFFFFFFFFu; _fb = (uint32_t)(ebx) & 0xFFFFFFFFu;
     _fas = (int32_t)(int32_t)(_fa); _fbs = (int32_t)(int32_t)(_fb); /* cmp esi, ebx (32-bit) */
-    if (CMP_EQ(_fa, _fb)) { g_seh_ebp = ebp; sub_000445DF(); return; } /* je: equal / zero */
+    if (CMP_EQ(_fa, _fb)) { g_seh_ebp = ebp; *next = 0x000445DFu; return; } /* je: equal / zero */
 
 loc_00044399: ;
     ebp = 0; /* xor self */
@@ -9553,7 +9572,7 @@ loc_00044399: ;
     eax = 0; /* xor self */
     _fa = (uint32_t)(eax) & 0xFFFFFFFFu; _fas = (int32_t)(int32_t)(_fa); /* xor result */
 
-    g_seh_ebp = ebp; sub_000443A0(); return; /* fallthrough 0x000443A0 */
+    g_seh_ebp = ebp; *next = 0x000443A0u; return; /* fallthrough 0x000443A0 */
 
 }
 
@@ -9563,7 +9582,7 @@ loc_00044399: ;
  * CC: cdecl, 0 params, returns int_or_void
  * Frame: fpo_leaf
  */
-void sub_000443A0(void)
+static void training_body_000443A0(uint32_t *next)
 {
     uint32_t ebp = 0;
     ebp = g_ebp;  /* frameless: caller's frame */
@@ -9803,13 +9822,13 @@ loc_00044596: ;
 loc_000445B5: ;
     MEM32(0x30DAAC) = 0x41200000;
     MEM32(0x315AD0) = 0x41200000;
-    g_seh_ebp = ebp; sub_000445DF(); return; /* tail jmp 0x000445DF */
+    g_seh_ebp = ebp; *next = 0x000445DFu; return; /* tail jmp 0x000445DF */
 
 loc_000445CB: ;
     MEM32(0x30DAAC) = 0;
     MEM32(0x315AD0) = 0;
 
-    g_seh_ebp = ebp; sub_000445DF(); return; /* fallthrough 0x000445DF */
+    g_seh_ebp = ebp; *next = 0x000445DFu; return; /* fallthrough 0x000445DF */
 
 }
 
@@ -9819,7 +9838,7 @@ loc_000445CB: ;
  * CC: cdecl, 0 params, returns int_or_void
  * Frame: fpo_leaf
  */
-void sub_000445DF(void)
+static void training_body_000445DF(uint32_t *next)
 {
     uint32_t ebp = 0;
     ebp = g_ebp;  /* frameless: caller's frame */
@@ -10681,7 +10700,7 @@ loc_00044C2C: ;
     PUSH32(esp, 0x00044C31u); RECOMP_ABI_CALL(0x0009C5F0u, sub_0009C5F0); /* call 0x0009C5F0 */
 
 loc_00044C31: ;
-    g_seh_ebp = ebp; sub_00044320(); return; /* tail jmp 0x00044320 */
+    g_seh_ebp = ebp; *next = 0x00044320u; return; /* tail jmp 0x00044320 */
 
     #undef fp_push
     #undef fp_pop

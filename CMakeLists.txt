@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.30)
 project(doa1u_recomp C CXX)
+if(NOT CMAKE_SCRIPT_MODE_FILE)
+    include(cmake/BuildConfigurations.cmake)
+endif()
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_STANDARD 17)
@@ -152,10 +155,11 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 )
 
 if(MSVC)
-    # Keep Release symbols and distinct guest functions for reliable crash stacks.
-    target_compile_options(${PROJECT_NAME} PRIVATE /bigobj /Zi /Oy-)
+    # Debug/RelWithDebInfo keep symbols; Release does not produce PDBs.
+    target_compile_options(${PROJECT_NAME} PRIVATE /bigobj /Oy- "$<$<NOT:$<CONFIG:Release>>:/Zi>")
     target_link_options(${PROJECT_NAME} PRIVATE
-        /LARGEADDRESSAWARE /DEBUG /OPT:REF /OPT:NOICF
+        /LARGEADDRESSAWARE "$<$<NOT:$<CONFIG:Release>>:/DEBUG>" /OPT:NOICF
+        $<IF:$<CONFIG:Debug>,/OPT:NOREF,/OPT:REF>
         # Fixed host addresses support the existing CDB scripts.
         /DYNAMICBASE:NO /HIGHENTROPYVA:NO
     )
@@ -168,8 +172,8 @@ target_include_directories(nri_backend_check PRIVATE src "${DOA1U_XBOXRECOMP_RUN
 target_link_libraries(nri_backend_check PRIVATE NRI doa1u_imgui d3d11 d3dcompiler winmm)
 
 if(MSVC)
-    target_compile_options(nri_backend_check PRIVATE /Zi)
-    target_link_options(nri_backend_check PRIVATE /DEBUG)
+    target_compile_options(nri_backend_check PRIVATE "$<$<NOT:$<CONFIG:Release>>:/Zi>")
+    target_link_options(nri_backend_check PRIVATE "$<$<NOT:$<CONFIG:Release>>:/DEBUG>")
 endif()
 
 if(NOT CMAKE_SCRIPT_MODE_FILE)
@@ -188,3 +192,7 @@ add_executable(training_stage_change_check EXCLUDE_FROM_ALL
     tools/training_stage_change_check.c src/game/training_stage_change.c
     src/runtime/recomp_manual.c)
 target_include_directories(training_stage_change_check PRIVATE src)
+
+if(NOT CMAKE_SCRIPT_MODE_FILE)
+    doa1u_finalize_debug_targets("${CMAKE_CURRENT_SOURCE_DIR}")
+endif()

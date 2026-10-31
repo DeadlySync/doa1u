@@ -12,6 +12,7 @@
 static HANDLE requested, completed;
 static volatile LONG captured;
 static int armed;
+static uintptr_t crt_begin, crt_end;
 static DWORD fault_thread, dump_error;
 static EXCEPTION_RECORD fault_record;
 static CONTEXT fault_context;
@@ -52,6 +53,15 @@ static DWORD WINAPI dump_worker(void *unused)
 
 void crash_capture_init(void)
 {
+    /* Resolve before a fault: no loader calls or symbol lookup on its stack. */
+    HMODULE crt = GetModuleHandleW(L"ucrtbase.dll");
+    if (crt) {
+        const IMAGE_DOS_HEADER *dos = (const IMAGE_DOS_HEADER *)crt;
+        const IMAGE_NT_HEADERS *nt = (const IMAGE_NT_HEADERS *)
+            ((const char *)crt + dos->e_lfanew);
+        crt_begin = (uintptr_t)crt;
+        crt_end = crt_begin + nt->OptionalHeader.SizeOfImage;
+    }
     DWORD length = GetModuleFileNameW(NULL, dump_path, 32768);
     if (!length || length >= 32768) return;
     wchar_t *slash = wcsrchr(dump_path, L'\\');
@@ -126,4 +136,19 @@ int crash_capture_null_execute(void *exception_pointers)
 int crash_capture_known_fault(void *exception_pointers)
 {
     return capture_fault((EXCEPTION_POINTERS *)exception_pointers);
+}
+
+int crash_capture_crt_read(void *exception_pointers)
+{
+    EXCEPTION_POINTERS *ep = (EXCEPTION_POINTERS *)exception_pointers;
+    uintptr_t ip = (uintptr_t)ep->ContextRecord->Rip;
+    /* APU/GPU fault handling precedes this check in the caller. CRT reads are
+     * not guest MMIO. Preserve their original context before stdio/unwinding,
+     * which can fail again when native state has already been corrupted. */
+    if (ep->ExceptionRecord->ExceptionCode != EXCEPTION_ACCESS_VIOLATION
+        || ep->ExceptionRecord->NumberParameters < 2
+        || ep->ExceptionRecord->ExceptionInformation[0] != 0
+        || !crt_begin || ip < crt_begin || ip >= crt_end)
+        return 0;
+    return capture_fault(ep);
 }

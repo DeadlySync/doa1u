@@ -178,6 +178,8 @@ static LONG CALLBACK veh_handler(PEXCEPTION_POINTERS ep)
 
         if (crash_capture_null_execute(ep))
             return EXCEPTION_CONTINUE_SEARCH;
+        if (crash_capture_crt_read(ep))
+            return EXCEPTION_CONTINUE_SEARCH;
 
         /* Repeated native TLS-read failure in the float-to-integer helper.
          * It exits before the last-chance filter can run. Guest loads in this

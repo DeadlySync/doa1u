@@ -14912,7 +14912,26 @@ loc_00016695: ;
  * CC: cdecl, 0 params, returns int_or_void
  * Frame: fpo_leaf
  */
-void sub_000166B0(void)
+/* GEN-EDIT: constant-stack task 166B0/167F0/16AC4. Native recursion is not a guest jump. */
+static void task_frame_body_000166B0(uint32_t *next);
+static void task_frame_body_000167F0(uint32_t *next);
+static void task_frame_body_00016AC4(uint32_t *next);
+static void task_frame_cycle(uint32_t entry)
+{
+    while (entry) {
+        uint32_t next = 0;
+        switch (entry) {
+        case 0x000166B0u: task_frame_body_000166B0(&next); break;
+        case 0x000167F0u: task_frame_body_000167F0(&next); break;
+        case 0x00016AC4u: task_frame_body_00016AC4(&next); break;
+        }
+        entry = next;
+    }
+}
+void sub_000166B0(void) { task_frame_cycle(0x000166B0u); }
+void sub_000167F0(void) { task_frame_cycle(0x000167F0u); }
+void sub_00016AC4(void) { task_frame_cycle(0x00016AC4u); }
+static void task_frame_body_000166B0(uint32_t *next)
 {
     uint32_t ebp = 0;
     ebp = g_ebp;  /* frameless: caller's frame */
@@ -15122,7 +15141,7 @@ loc_000167DB: ;
     MEM8(0x301FB0) = 0;
     /* nop */
 
-    g_seh_ebp = ebp; sub_000167F0(); return; /* fallthrough 0x000167F0 */
+    g_seh_ebp = ebp; *next = 0x000167F0u; return; /* fallthrough 0x000167F0 */
 
 }
 
@@ -15132,7 +15151,7 @@ loc_000167DB: ;
  * CC: cdecl, 0 params, returns int_or_void
  * Frame: fpo_leaf
  */
-void sub_000167F0(void)
+static void task_frame_body_000167F0(uint32_t *next)
 {
     uint32_t ebp = 0;
     ebp = g_ebp;  /* frameless: caller's frame */
@@ -15491,7 +15510,7 @@ loc_00016ABC: ;
     _fa = (uint32_t)(LO8(ebx)) & 0xFFu; _fas = (int32_t)(int8_t)(_fa); /* xor result */
     MEM8(0x301FB0) = LO8(ebx);
 
-    g_seh_ebp = ebp; sub_00016AC4(); return; /* fallthrough 0x00016AC4 */
+    g_seh_ebp = ebp; *next = 0x00016AC4u; return; /* fallthrough 0x00016AC4 */
 
 }
 
@@ -15501,7 +15520,7 @@ loc_00016ABC: ;
  * CC: cdecl, 0 params, returns int_or_void
  * Frame: fpo_leaf
  */
-void sub_00016AC4(void)
+static void task_frame_body_00016AC4(uint32_t *next)
 {
     uint32_t ebp = 0;
     ebp = g_ebp;  /* frameless: caller's frame */
@@ -15850,7 +15869,7 @@ loc_00016D5F: ;
     MEM8(0x3024B4) = LO8(ecx);
     MEM8(0x301F98) = LO8(edx);
     MEM8(0x302398) = LO8(eax);
-    g_seh_ebp = ebp; sub_000166B0(); return; /* tail jmp 0x000166B0 */
+    g_seh_ebp = ebp; *next = 0x000166B0u; return; /* tail jmp 0x000166B0 */
 
     #undef fp_push
     #undef fp_pop

@@ -217,7 +217,7 @@ void panel()
 	if (page == 0)
 		ImGui::SetCursorPosY(ImGui::GetCursorPosY() - 10 * ui_scale);
 	else
-	ImGui::Spacing();
+		ImGui::Spacing();
 
 	if (page == 0)
 	{
@@ -248,7 +248,6 @@ void panel()
 		ImGui::SetCursorPos(ImVec2(14 * ui_scale, 12 * ui_scale));
 		ImGui::TextUnformatted("Aspect Ratio");
 
-		float col = ImGui::GetWindowWidth() * .51f;
 		ImGui::SetCursorPos(ImVec2(col, 10 * ui_scale));
 
 		for (int a = 0; a < 2; ++a)

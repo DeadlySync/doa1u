@@ -1,7 +1,7 @@
 # DOA1U roadmap — final v0.9.5
 
-Updated 2026-10-31. The user accepted the working image-only build and requested
-v0.9.5 as the final build of this project. No further implementation is scheduled.
+Updated 2026-10-31. v0.9.5 is the final build of this project. 
+No further implementation is planned.
 
 ## Delivered
 
@@ -25,8 +25,8 @@ v0.9.5 as the final build of this project. No further implementation is schedule
 - [x] Xbox-backed movie acquisition with unchanged buffered decoder and verified
   complete BGR/PCM parity.
 - [x] Six-stage implementation, Debug/Release automated integration gate, test
-  deployment and final user acceptance. See [checklist](xiso-implementation-checklist.md)
-  and [verification evidence](xiso-integration-results.md).
+  deployment. See [verification](verification.md)
+  and [retained regression checks](../tools/REGRESSION_TESTS.md).
 
 ## Six-stage image backend roadmap
 
@@ -37,13 +37,11 @@ v0.9.5 as the final build of this project. No further implementation is schedule
 | 3 | Image-backed Xbox file operations and handle lifetimes | Complete |
 | 4 | Image discovery, XBE identity and process-lifetime bootstrap | Complete |
 | 5 | FMV acquisition through the Xbox API; decode parity | Complete |
-| 6 | Integration checks, deployment and user release acceptance | Complete |
+| 6 | Integration checks, deployment and release | Complete |
 
-## Closed historical issues — user confirmation, 2026-10-31
+## Closed historical issues
 
-The user explicitly confirmed that **B2 through B5 were all resolved by the
-animation-loading correction**. This supersedes the earlier unresolved/deferred
-status; these are closed, not remaining roadmap work:
+These are closed, not remaining roadmap work:
 
 - [x] B2: Hayabusa vault-over-Kasumi animation.
 - [x] B3: Jann Lee-stage collision, false ring-outs and floating.
@@ -56,10 +54,5 @@ independent investigation or additional code change.
 
 ## Out of scope
 
-- Online mode/menu-removal proposal: not implemented; online play is unsupported.
-
-Windows remains the supported platform. OS-selected GPU behavior is intentional;
-a separate in-app GPU-adapter selector is not a pending feature. User acceptance
-is overall release sign-off plus the explicit B2–B5 closure above, not exhaustive
-certification of every scene/backend. Historical investigation notes remain evidence,
-not an instruction to resume work after this final release.
+- Online mode not implemented; online play is unsupported.
+- Linux and Mac systems are not supported.

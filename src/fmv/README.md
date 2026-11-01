@@ -65,8 +65,7 @@ uninitialized allocation bytes. Tests pack and hash B/G/R only, without modifyin
 production frames. Alpha initialization/render behavior is unchanged.
 
 The checks are excluded from default builds; building them does not deploy.
-Stage 6's automated gate passes in both configurations and Release test copies
-are deployed. A real image-only launch completed the opening movie, and the user
-accepted the relocated image-only build for final release v0.9.5. This overall
-sign-off does not claim itemized physical A/V or every gameplay-case verification.
-See the [integration results](../../docs/xiso-integration-results.md).
+Automated gate passes in both configurations and Release test copies
+are deployed.
+ 
+See [verification](../../docs/verification.md).

@@ -1,124 +1,71 @@
 # Source layout
 
+The final v0.9.5 build keeps production code, functional runtime fixes and optional
+diagnostic hooks separate. See the [main README](../README.md) for running/building.
+
 | Folder | Responsibility |
 | --- | --- |
-| `common` | Canonical guest addresses, memory/register access, input masks, diagnostic interface |
-| `runtime` | Dispatch hooks, host-backed fibers, functional wait fixes, release diagnostic adapters |
-| `game` | Guest frame driver, task registration, match/menu flow and pause |
-| `frontend` | Startup logo, frontend graphics, master loop and scene state machine |
-| `render/d3d11` | Host GPU backend, textures, presentation and pacing |
-| `render/d3d8` | Guest D3D8 state and vertex descriptor repairs |
-| `render/fighters` | Fighter rendering shadows and isolation harness |
-| `render/background` | Stage geometry, stage drawing and camera hooks |
-| `audio` | CRI cue controls, game-owned sample-buffer output and Xbox ADPCM decoder |
-| `fmv` | Movie lifecycle, Xbox-backed movie acquisition, Sofdec demux/video and ADX decoding; see its README |
-| `filesystem` | Project-owned Xbox file backend, read-only XDVDFS reader, image adapter and EXE-relative bootstrap/XBE identity checks; see its README/checklist for staged integration status |
-| `assets` | Shared asset-loading shadows |
-| `diagnostics` | Optional probes and RenderDoc capture; excluded unless enabled |
-| `recomp/gen` | Generated guest code; keep generator layout and reapply rules |
-| `third_party` | External dependency headers/source; preserve upstream layout and licenses |
-| `xboxrecomp` | Tracked DOA1U runtime overrides applied over the external dependency |
+| `common` | Canonical guest addresses, register/memory access, input masks and shared interfaces |
+| `runtime` | Dispatch, fibers, constant-stack repairs, restart and optional crash capture |
+| `game` | Guest frame/task flow, scene initialization and pause |
+| `controller` | Project-owned static SDL3 input adapter, player routing and mapping |
+| `render/nri`, `render/common` | Multi-API rendering, shared shaders, scaling and anti-aliasing |
+| `render/d3d11`, `render/d3d8` | Existing direct-D3D11 fallback and guest D3D8 state |
+| `frontend` | Native launcher/settings, input focus and guest front-end menus |
+| `render/fighters`, `render/background` | Fighter/stage rendering shadows and optional read-only diagnostics |
+| `audio` | CRI cue controls, sample-buffer output and Xbox ADPCM |
+| `fmv` | Original movie lifecycle, Xbox-backed acquisition, Sofdec/ADX decoding |
+| `filesystem` | Project-owned Xbox file implementation, XDVDFS reader, image adapter and validated bootstrap |
+| `assets` | Asset-loading shadows |
+| `diagnostics` | Optional probes and RenderDoc integration |
+| `recomp/gen` | Tracked generated guest code with required manual repairs |
+| `third_party` | Dependency source/headers and their retained notices |
+| `xboxrecomp` | Tracked overrides applied over the external runtime checkout |
+| `resources` | Embedded icon resource; does not require a loose ICO to build |
 
-`main.c` remains the host entry point. `source_layout.json` maps former root
-filenames to their current locations (documentation paths are port-relative).
+`main.c` owns host startup and verified XBE data loading. `app_version.h` is the
+single version definition shared by Windows VERSIONINFO and window titles.
+`create_logs.bat` is the pure batch opt-in diagnostic launcher.
 
-## Shared definitions
+## Shared definitions and generated code
 
-`common/guest_addresses.h` is the only handwritten address-macro registry.
-Use `DOA1U_<ROLE>_VA` names, with the correct guest-width access at each call site.
-Old aliases such as `GAME_MODE`, `GAME_MODE_B` and `G_GMODE` are replaced by
-`DOA1U_GAME_MODE_VA`. The migration map is `../docs/address_aliases.json`.
+`common/guest_addresses.h` is the handwritten guest-address registry; use the
+appropriate guest-width access at each site. Shared register/memory access lives
+in `common/guest_runtime.h`; controller masks live in `common/input_constants.h`.
+`docs/address_aliases.json` retains the address/name migration map.
 
-Use `common/guest_runtime.h` for guest registers, memory access and TLS linkage.
-Shared controller masks live in `common/input_constants.h`; action-button masks
-are distinct from the Start-only mask. Keep implementation-local macros near
-the top of their own file. Feature macros must precede the headers they configure.
+A normal build uses the tracked generated code as-is. Regeneration can erase
+load-bearing repairs. Keep `tools/reapply_gen_edits.py`, `relift_compile_fixes.py`
+and the constant-stack `fix_*_cycle.py` scripts; do not regenerate blindly.
 
-Historical naming catalogs are in `../docs/reference`. Longer research comments
-are preserved in `../docs/source_notes.md`, not embedded in executable code.
+## Runtime override integration
 
-## Build variants
+The external xboxrecomp baseline is documented in the main README. CMake copies
+unchanged runtime source/headers into `build/xboxrecomp-runtime`, then overlays
+`src/xboxrecomp` before adding its targets. The external checkout is not edited.
+The MIT notice is retained in `xboxrecomp/LICENSE`.
 
-From the port root, configure either variant (presets require CMake 3.21+):
+Important overrides include input latching/device sampling; bridge handle and
+completion routing; dynamic path resolution; sparse virtual partition devices;
+pushbuffer ring/split-packet/CALL state; ordered presentation/fence behavior;
+and opt-in host/kernel logging. `kernel_thunks.c` changes only logger setup.
 
-```powershell
-cmake --preset release
-cmake --preset diagnostic
-```
+The former `kernel_file.c` override now lives in `filesystem/xbox_file.c`.
+`cmake/XboxFileBackend.cmake` selects it exactly once on the existing `xbox_kernel`
+target and preserves the public Xbox API. It retains host saves/FATX/virtual disks
+and routes mounted disc files through `filesystem/xbox_image_file.cpp`.
+The image reader/adapter/bootstrap are not a second competing public API.
 
-Release uses `build`; diagnostic uses `build-diagnostic`. Equivalently, set
-`-DDOA1U_DIAGNOSTIC=OFF` or `ON` on a normal CMake configure command.
+## Build variants and verification
 
-Diagnostic enables `src/diagnostics/*.c`, guest/runtime ABI checks and optional
-RenderDoc (`RECOMP_WITH_RENDERDOC=OFF` disables that trigger). Release excludes
-those source files and uses minimal no-op/passthrough adapters for symbols still
-referenced by generated guest code. Functional rendering/runtime fixes remain
-enabled in both variants. Release logging is separately opt-in through
-`create_logs.bat`; Debug retains its diagnostic output by default. See
-[logging policy](../docs/logging.md).
+Use **Debug** for CDB/source stepping (`/Od /Ob0`, full matching PDB) and **Release**
+for the final optimized build (`/O2 /Ob2`, no PDB). `DOA1U_DIAGNOSTIC` is a separate
+source-selection option for probes/ABI checks/RenderDoc, not a replacement for
+Debug. Functional runtime/rendering fixes remain present in both variants.
+Release logs are opt-in; Debug logs by default. See [logging](../docs/logging.md).
 
-When builds are requested, the existing release command remains:
+- [Retained checks](../tools/REGRESSION_TESTS.md)
+- [Verification and coverage](../docs/verification.md)
+- [Rendering](../docs/rendering.md), [filesystem](filesystem/README.md), [movies](fmv/README.md)
+- [Static SDL3 integration and notices](third_party/SDL3/README.md)
 
-```powershell
-cmake --build build --config Release --target doa1u_recomp
-```
-
-Release uses `/O2 /Ob2` without PDB generation. Debug uses `/Od /Ob0` and full
-symbols; deploy a matching EXE/PDB pair when debugging. The active user deployment
-is `../TEST`, with the game image, INI, UDATA/TDATA, licenses and optional
-`create_logs.bat` beside the EXE. Do not overwrite user settings or saves.
-
-## Checks without compiling
-
-```powershell
-py -3 tools/audit_source.py
-cmake -DDOA1U_DIAGNOSTIC=OFF -P tools/check_source_config.cmake
-cmake -DDOA1U_DIAGNOSTIC=ON -P tools/check_source_config.cmake
-```
-
-These check macro use/duplicates, local includes, source paths and diagnostic
-source selection. They do not establish compiler/linker or runtime correctness.
-
-## Direct-match diagnostics
-
-Use `RECOMP_TEST_MATCH=1` for the existing diagnostic match (Kasumi versus CPU Jann Lee, stage 3 / SHI by default).
-`RECOMP_STAGE_ID=0..12` overrides the stage; `-1` restores automatic selection.
-The retired force-Arcade harness and its launch scripts have been removed.
-`RECOMP_FLOW_TRACE=1` remains a read-only frontend trace.
-
-## xboxrecomp local overrides
-
-`xboxrecomp/` preserves DOA1U changes relative to external xboxrecomp baseline
-`ae9cb00b295eb418f120e6f7f02f43be8cea080b`. It is an override set, not a full
-runtime fork. Edit these tracked copies, not the external dependency. Upstream
-licensing is retained in `xboxrecomp/LICENSE`.
-
-CMake copies unchanged dependency sources into `build/xboxrecomp-runtime`,
-then overlays this directory before adding the runtime targets. Source and
-header selection therefore agree, including quoted includes. No changes are
-written to the original dependency. Reconfigure after adding/removing override
-files; edits to existing files also trigger CMake regeneration.
-
-| Files beneath `src/xboxrecomp/` | DOA1U changes |
-| --- | --- |
-| `src/input/keyboard.c`, `tests/input_keyboard/test_main.c` | Latch short Enter/Start presses between guest polls; cover release/repeat behavior. |
-| `src/input/xinput_device.c` | Sample controllers on a worker; avoid blocking gameplay on device discovery and empty-slot polling. |
-| `src/kernel/kernel_bridge.c` | Rebase stalled vblank schedules without rapid catch-up; route virtual-device operations. |
-| `src/kernel/kernel_virtual_disk.c`, `.h` | Sparse process-local raw partition devices; persistent saves remain ordinary files, not disk images. |
-| `src/kernel/kernel_path.c` | Resolve registered aliases and classify disc/host/relative paths without routing writable hard-disk paths into the image. |
-| `src/kernel/kernel_thunks.c`, `doa1u_logging.h` | Opt-in Release logger initialization and shared EXE-relative logging policy; Debug defaults retained. |
-| `src/kernel/CMakeLists.txt` | Compile the virtual-device backend. |
-| `src/kernel/nv2a_backend.h` | Share explicit screen-space/presentation metadata with the port renderer. |
-| `src/kernel/nv2a_pb_exec.c` | Ordered presentation markers, inline XYZ fixed-function transforms, bulk P8 decode, executor fence handling and opt-in verbose draw logs. |
-| `src/kernel/nv2a_pb_scan.c` | Follow actual ring JUMPs and retain split packets/CALL state; fixes skipped commands and user-confirmed flicker while retaining default GET timing. |
-| `src/kernel/xbox_memory_layout.c`, `.h` | Executor-owned fence completion, event-assisted GPU waits, real wrap traversal and separation of functional rendering from optional tracing. |
-
-The external dependency still supplies all unchanged runtime code and headers.
-The former file override now lives in `src/filesystem/xbox_file.c`, selected once
-by `cmake/XboxFileBackend.cmake` instead of upstream `kernel_file.c`. It retains
-host/FATX/virtual-disk behavior and dispatches mounted disc requests to the internal
-image adapter. Startup now discovers images beside the EXE and validates original
-XBE identity. Movie acquisition uses the same native Xbox API; all six stages are
-delivered and the user accepted the image-only build for final release v0.9.5.
-Do not replace it with this partial override directory. Generated game code is
-tracked in `recomp/gen/`, including manual repairs; do not regenerate blindly.

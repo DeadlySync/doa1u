@@ -3,7 +3,12 @@
 **Final release: v0.9.5** — a native Windows recompilation of the original Xbox game.
 
 Arcade, Training, Time Attack, Survival, Kumite and the Secret Menu are playable,
-with music, voices, sound effects and movies. Online play is not supported.
+with music, voices, sound effects and movies. 
+Online play is not supported.
+
+<img width="500" height="289" alt="1" src="https://github.com/user-attachments/assets/00751724-20d2-4288-b5be-a25950227dd4" />
+<img width="500" height="289" alt="2" src="https://github.com/user-attachments/assets/db458ff0-47de-4a23-ad0e-bdcd35b15d58" />
+<img width="500" height="289" alt="3" src="https://github.com/user-attachments/assets/6e067ed6-1de6-4153-839e-c0a66bc08605" />
 
 ## Features
 

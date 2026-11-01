@@ -2,11 +2,17 @@
 
 ## User confirmation - 2026-10-31
 
-User retested the deployed correction and confirmed: "that's it! it's fixed!"
-Hayabusa Training Left+C wrong throw / subsequent sinking CLOSED for this
-reproduction. Preserve the570E0 table-selector predicate correction. No new
-build required. B2 vault, B3 stage collision and attract-mode B5 are NOT claimed
-resolved by this confirmation; their connection remains unverified.
+User initially retested the deployed correction and confirmed: "that's it! it's
+fixed!" Hayabusa Training Left+C wrong throw / subsequent sinking is CLOSED.
+Preserve the570E0 table-selector predicate correction.
+
+**Latest correction, after final v0.9.5 acceptance:** the user explicitly confirms
+that **B2–B5 were all resolved by the animation-loading correction**: Hayabusa
+vault animation, Jann Lee-stage collision/false ring-outs/floating, victory replay
+truncation, and incorrect attract-mode animations. This supersedes the earlier
+unverified-connection/unresolved status. Record the shared cause and closure as
+user-confirmed, not a new independent reverse-engineering finding. No new code
+or rebuild is required; the investigation below is preserved as historical evidence.
 
 ## 2026-10-31: CDB capture explains wrong throw; correction deployed
 

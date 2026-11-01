@@ -278,4 +278,5 @@ superseded by the user's final acceptance and explicit v0.9.5 commit/push reques
 The active deployment is now `H:\Projects\DOA1U\TEST`, with exactly one adjacent
 image, INI, UDATA/TDATA and licenses. Its image bootstrap and XBE identity checks
 passed after relocation. No user game data was relocated or deleted by the agent.
-See [project roadmap](roadmap.md) for delivered scope and historical deferred issues.
+See [project roadmap](roadmap.md) for delivered scope, user-confirmed B2–B5 closure
+and out-of-scope features.

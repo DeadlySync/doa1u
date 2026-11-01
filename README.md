@@ -68,7 +68,7 @@ default. To collect `run.log`, `run.err` and `xbox_kernel.log`, launch the pure
 Windows [create_logs.bat](src/create_logs.bat) beside the EXE; see
 [logging instructions](docs/logging.md). Existing logs are replaced when enabled.
 
-[Final roadmap](docs/roadmap.md) records delivered scope and historical deferred issues.
+[Final roadmap](docs/roadmap.md) records delivered scope, closed issues and out-of-scope features.
 
 # Building
 

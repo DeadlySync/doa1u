@@ -104,6 +104,11 @@ results. Previous automated full-content/decoder/API evidence covers both modes;
 the accepted interactive deployment is image-only. No further work is scheduled
 unless the user reports an issue.
 
+After final acceptance the user explicitly clarified that B2–B5 were all solved
+by the animation-loading correction. Those historical issues are now closed in
+the roadmap; this specific confirmation supersedes their former deferred status.
+No code change, version bump or new physical-test run accompanies this correction.
+
 F1 must retain the existing mount/index. ESC must start a fresh process that
 rediscovers, remounts and revalidates its source. The headless gate checks those
 ownership/discovery contracts but cannot establish the physical UI behavior.

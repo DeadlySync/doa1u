@@ -1,4 +1,4 @@
-# Dead or Alive ULTIMATE
+# Dead or Alive ULTIMATE - v0.9.5
 Recompilation for Dead or Alive 1 - ULTIMATE from the OG XBOX
 
 # Features
@@ -18,7 +18,8 @@ Recompilation for Dead or Alive 1 - ULTIMATE from the OG XBOX
   - Bilinear
   - Trilinear
   - Anisotropic 
-* PS4, PS5, XBOX and Nintendo Pro Controller support (soon.)
+* PS4, PS5, Xbox and Nintendo Pro Controller support through statically linked SDL3.
+* Direct read-only .iso/.xiso gameplay without extraction; saves stay host-backed.
 
 # Made With
 * xboxrecomp (MIT) https://github.com/sp00nznet/xboxrecomp
@@ -53,6 +54,21 @@ folder; the external checkout is not patched or edited. See
 [src/README.md](src/README.md#xboxrecomp-local-overrides) for the fix inventory.
 The complete patched `src/recomp/gen` tree is tracked too; rebuilding does not
 require regenerating it from an XBE. Original game data is not included.
+
+# Running the final build
+
+Place exactly one supported `.iso`/`.xiso` beside `doa1u_recomp.exe`. The image
+is discovered automatically and its root `Doa1.xbe` is validated by title ID and
+full SHA-256. Names ending in `.xiso.iso` or `.iso.xiso` also work. No extraction
+is required. With no adjacent image, extracted `Doa1.xbe`/assets remain supported.
+
+Keep `doa1u_graphics.ini`, `UDATA`, `TDATA` and license notices beside the EXE.
+F1 opens settings; ESC restarts in a new process. Release creates no logs by
+default. To collect `run.log`, `run.err` and `xbox_kernel.log`, launch the pure
+Windows [create_logs.bat](src/create_logs.bat) beside the EXE; see
+[logging instructions](docs/logging.md). Existing logs are replaced when enabled.
+
+[Final roadmap](docs/roadmap.md) records delivered scope and historical deferred issues.
 
 # Building
 

@@ -251,3 +251,12 @@ Thumbs.db
 !/tools/capture_training_crash.ps1
 !/tools/capture_training_crash.bat
 !/tools/capture_debugger_check.c
+!/tools/xiso_reader_check.cpp
+!/tools/xiso_reader_c_check.c
+!/tools/xbox_file_backend_check.c
+!/tools/xbox_image_file_check.cpp
+!/tools/disc_bootstrap_check.cpp
+!/tools/sofdec_check.cpp
+!/tools/sofdec_io_check.c
+!/tools/fmv_path_check.c
+!/tools/check_xiso_integration.ps1

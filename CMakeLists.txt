@@ -86,6 +86,7 @@ set(GAME_SOURCES
     src/audio/xbox_adpcm.c
     src/fmv/fmv.c
     src/fmv/sofdec.c
+    src/fmv/sofdec_io.c
     src/assets/loaders.c
 )
 if(DOA1U_DIAGNOSTIC)
@@ -99,6 +100,11 @@ else()
 endif()
 
 add_executable(${PROJECT_NAME} WIN32 ${GAME_SOURCES} ${RECOMP_GEN_SOURCES})
+if(NOT CMAKE_SCRIPT_MODE_FILE)
+    # Keep the launcher current even when only the batch changes (no EXE relink).
+    file(GENERATE OUTPUT "$<TARGET_FILE_DIR:${PROJECT_NAME}>/create_logs.bat"
+        INPUT "${CMAKE_CURRENT_SOURCE_DIR}/src/create_logs.bat")
+endif()
 if(WIN32)
     enable_language(RC)
     target_sources(${PROJECT_NAME} PRIVATE src/app.rc)
@@ -116,6 +122,19 @@ target_include_directories(doa1u_imgui PUBLIC src/third_party/imgui)
 # XInput polling overwrite its HasGamepad flag or inject unfiltered pad input.
 target_compile_definitions(doa1u_imgui PRIVATE IMGUI_IMPL_WIN32_DISABLE_GAMEPAD)
 target_link_libraries(doa1u_imgui PRIVATE d3d11 d3dcompiler dwmapi)
+if(NOT CMAKE_SCRIPT_MODE_FILE)
+    include(cmake/XisoReader.cmake)
+    include(cmake/XboxFileBackend.cmake)
+    doa1u_select_xbox_file_backend(xbox_kernel "${DOA1U_XBOXRECOMP_RUNTIME_DIR}")
+    target_sources(xbox_kernel PRIVATE src/filesystem/xbox_image_file.cpp src/filesystem/disc_bootstrap.cpp)
+    target_link_libraries(xbox_kernel PRIVATE bcrypt)
+    if(MSVC)
+        target_compile_options(xbox_kernel PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:/EHsc>")
+    endif()
+    doa1u_add_xbox_file_backend_check()
+    include(cmake/SofdecChecks.cmake)
+endif()
+
 # Offline reusable decoder check; never linked into the game.
 add_executable(audio_bank_check EXCLUDE_FROM_ALL
     tools/audio_bank_check.c src/audio/xbox_adpcm.c)

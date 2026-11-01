@@ -4,12 +4,14 @@
  * implementation of the format's two-pole reconstruction, not an MP2 decoder.
  */
 #include "fmv/sofdec.h"
+#include "fmv/sofdec_io.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #define PL_MPEG_IMPLEMENTATION
+#define PLM_NO_STDIO /* Our Xbox acquisition supplies the memory buffer. */
 #include "third_party/pl_mpeg.h"
 
 struct Sofdec
@@ -105,33 +107,10 @@ static int decode_adx(Sofdec* m, const uint8_t* data, size_t bytes)
 
 Sofdec* sofdec_open(const char* path) 
 {
-	FILE* file = fopen(path, "rb");
-	if (!file) 
+	uint8_t* bytes = NULL;
+	size_t length = 0;
+	if (!sofdec_read_file(path, &bytes, &length))
 		return NULL;
-
-	if (fseek(file, 0, SEEK_END)) 
-	{ 
-		fclose(file); 
-		return NULL; 
-	}
-
-	long length = ftell(file);
-	if (length <= 0 || length > 512 * 1024 * 1024) 
-	{ 
-		fclose(file); 
-		return NULL; 
-	}
-
-	rewind(file);
-	
-	uint8_t* bytes = malloc((size_t)length);
-	if (!bytes || fread(bytes, 1, (size_t)length, file) != (size_t)length) 
-	{
-		free(bytes); 
-		fclose(file); 
-		return NULL;
-	}
-	fclose(file);
 
 	Sofdec* m = calloc(1, sizeof(*m));
 	if (!m) 

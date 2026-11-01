@@ -5,7 +5,8 @@
 #include <stdint.h>
 typedef struct Sofdec Sofdec;
 
-/* Owns the demuxed movie and decoded ADX PCM until close. No guest/GPU APIs. */
+/* Full Xbox path, acquired through native Xbox file APIs (image or folder).
+ * Owns demuxed video and decoded ADX PCM until close. No guest/GPU calls. */
 Sofdec *sofdec_open(const char *path);
 
 void sofdec_close(Sofdec *movie);

@@ -1,0 +1,14 @@
+{
+  "acquisition": [
+    {"path":"DOA1/ss_opn.sfd","bytes":16717824,"sha256":"84a378d9a09d6de853cf16fd1eb942f8f7dc718523a1c2448702bdc2d0840b5e"},
+    {"path":"DOA1/ss_end.sfd","bytes":21635072,"sha256":"53d6a4bbac9a05282a61b9f6319049f20739bd94e2860fc48f364ba995091f73"},
+    {"path":"DOA2/2_VI_WIDE_B.sfd","bytes":36182016,"sha256":"c1ddfc7cc6b75f3ef1b87e41f23fd8610b6391e4c67c6c15d606acb5e47c284c"},
+    {"path":"DOA2/4_VI_STD_B.sfd","bytes":36595712,"sha256":"22bea836e475d7319eefa8bbbbe6b0c3d56ef2028171ac29e80a402376935526"},
+    {"path":"DOA2/DOA_G4.sfd","bytes":482758656,"sha256":"ae9c86d5ffa20eb9c1842af0d003db2578c63ffcee69fc2c7027b6a259fdc3db"},
+    {"path":"DOA2/doa2_op.sfd","bytes":0,"sha256":""}
+  ],
+  "decoded": [
+    {"path":"DOA1/ss_opn.sfd","width":320,"height":176,"fps":29.969999999999999,"frames":2174,"rate":44100,"channels":2,"samples":3228855,"pcm_sha256":"07417a229eb37478009ce8a7920313dfb1f723dc741ac9ed29ec871912e11818","bgr_sha256":"30cc461e487c37c8aede9b8fad0a460fbd8f7234283324c09dc078899d856267"},
+    {"path":"DOA1/ss_end.sfd","width":288,"height":224,"fps":29.969999999999999,"frames":2901,"rate":44100,"channels":2,"samples":4259968,"pcm_sha256":"a2f1217c403e662ac939bf42b0fdc7467545beb764c4470ca337a113b5bafb33","bgr_sha256":"cfcb5fc436a58f01703d61e0b49be4f4e2bf03cbded446c7d66691de236e2319"}
+  ]
+}

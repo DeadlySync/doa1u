@@ -11,7 +11,8 @@
 | `render/fighters` | Fighter rendering shadows and isolation harness |
 | `render/background` | Stage geometry, stage drawing and camera hooks |
 | `audio` | CRI cue controls, game-owned sample-buffer output and Xbox ADPCM decoder |
-| `fmv` | Movie lifecycle, Sofdec demux/video and ADX decoding |
+| `fmv` | Movie lifecycle, Xbox-backed movie acquisition, Sofdec demux/video and ADX decoding; see its README |
+| `filesystem` | Project-owned Xbox file backend, read-only XDVDFS reader, image adapter and EXE-relative bootstrap/XBE identity checks; see its README/checklist for staged integration status |
 | `assets` | Shared asset-loading shadows |
 | `diagnostics` | Optional probes and RenderDoc capture; excluded unless enabled |
 | `recomp/gen` | Generated guest code; keep generator layout and reapply rules |
@@ -52,8 +53,9 @@ Diagnostic enables `src/diagnostics/*.c`, guest/runtime ABI checks and optional
 RenderDoc (`RECOMP_WITH_RENDERDOC=OFF` disables that trigger). Release excludes
 those source files and uses minimal no-op/passthrough adapters for symbols still
 referenced by generated guest code. Functional rendering/runtime fixes remain
-enabled in both variants. This switch does not remove all logging from other
-subsystems or from the separate xboxrecomp toolkit.
+enabled in both variants. Release logging is separately opt-in through
+`create_logs.bat`; Debug retains its diagnostic output by default. See
+[logging policy](../docs/logging.md).
 
 When builds are requested, the existing release command remains:
 
@@ -61,9 +63,10 @@ When builds are requested, the existing release command remains:
 cmake --build build --config Release --target doa1u_recomp
 ```
 
-Always deploy both the resulting EXE and matching PDB to `../XISO` after a
-successful build. The reorganization was compiled/linked and deployed with the
-subsequent banked-audio/opponent-card iteration; gameplay verification is pending.
+Release uses `/O2 /Ob2` without PDB generation. Debug uses `/Od /Ob0` and full
+symbols; deploy a matching EXE/PDB pair when debugging. The active user deployment
+is `../TEST`, with the game image, INI, UDATA/TDATA, licenses and optional
+`create_logs.bat` beside the EXE. Do not overwrite user settings or saves.
 
 ## Checks without compiling
 
@@ -102,7 +105,8 @@ files; edits to existing files also trigger CMake regeneration.
 | `src/input/xinput_device.c` | Sample controllers on a worker; avoid blocking gameplay on device discovery and empty-slot polling. |
 | `src/kernel/kernel_bridge.c` | Rebase stalled vblank schedules without rapid catch-up; route virtual-device operations. |
 | `src/kernel/kernel_virtual_disk.c`, `.h` | Sparse process-local raw partition devices; persistent saves remain ordinary files, not disk images. |
-| `src/kernel/kernel_file.c`, `kernel_path.c` | Route raw-device I/O and partition aliases to the virtual backend while retaining native save directories. |
+| `src/kernel/kernel_path.c` | Resolve registered aliases and classify disc/host/relative paths without routing writable hard-disk paths into the image. |
+| `src/kernel/kernel_thunks.c`, `doa1u_logging.h` | Opt-in Release logger initialization and shared EXE-relative logging policy; Debug defaults retained. |
 | `src/kernel/CMakeLists.txt` | Compile the virtual-device backend. |
 | `src/kernel/nv2a_backend.h` | Share explicit screen-space/presentation metadata with the port renderer. |
 | `src/kernel/nv2a_pb_exec.c` | Ordered presentation markers, inline XYZ fixed-function transforms, bulk P8 decode, executor fence handling and opt-in verbose draw logs. |
@@ -110,5 +114,11 @@ files; edits to existing files also trigger CMake regeneration.
 | `src/kernel/xbox_memory_layout.c`, `.h` | Executor-owned fence completion, event-assisted GPU waits, real wrap traversal and separation of functional rendering from optional tracing. |
 
 The external dependency still supplies all unchanged runtime code and headers.
+The former file override now lives in `src/filesystem/xbox_file.c`, selected once
+by `cmake/XboxFileBackend.cmake` instead of upstream `kernel_file.c`. It retains
+host/FATX/virtual-disk behavior and dispatches mounted disc requests to the internal
+image adapter. Startup now discovers images beside the EXE and validates original
+XBE identity. Movie acquisition uses the same native Xbox API; all six stages are
+delivered and the user accepted the image-only build for final release v0.9.5.
 Do not replace it with this partial override directory. Generated game code is
 tracked in `recomp/gen/`, including manual repairs; do not regenerate blindly.

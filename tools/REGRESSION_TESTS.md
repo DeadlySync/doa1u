@@ -234,3 +234,23 @@ User reports Debug Training no longer crashed in their retest (provisional fix).
 ### v0.9.1 completion (2026-10-31)
 
 User confirmed the optimized Release build works in gameplay after the Training stack-cycle repairs. Version bumped to0.9.1 via app_version.h, shared by VERSIONINFO and window titles.
+
+### Final v0.9.5: image backend and opt-in Release logs (2026-10-31)
+
+All six XISO stages delivered and accepted by the user for final release. The
+repeatable `tools/check_xiso_integration.ps1` gate passed all 21 commands across
+Debug/Release: complete 289-file reader and Xbox API comparisons, host saves,
+handle/bridge lifetimes, discovery/identity checks, movie fault/path checks and
+four complete BGR/PCM parity manifests. Source ownership and configuration checks
+retain Debug `/Od /Ob0`/full PDB and Release `/O2 /Ob2`/no PDB. See
+[integration results](../docs/xiso-integration-results.md) for exact counts,
+limitations, evidence directories, acceptance scope and final deployment hash.
+
+`tools/check_release_logging.py` opens isolated real game copies and tests quiet
+Release, explicit `DOA1U_LOGS=0`, and the actual pure `src/create_logs.bat` opt-in.
+All three modes pass startup, v0.9.5 title, ESC into a distinct process and normal
+close. Quiet modes create no log files; batch opt-in creates nonempty `run.log`,
+`run.err` and `xbox_kernel.log` with restarted XBE/game-start evidence. Space and
+ampersand paths plus unrelated CWD pass. Test copies do not modify user saves or
+image contents. The final generated batch and EXE were tested together; Release
+PE has no CodeView/PDB entry. See [logging documentation](../docs/logging.md).

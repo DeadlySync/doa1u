@@ -20,6 +20,9 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#if defined(_WIN32)
+#include "xbox_image_file.h"
+#endif
 
 #if !defined(_WIN32)
 #include <fcntl.h>
@@ -250,6 +253,16 @@ NTSTATUS __stdcall xbox_NtCreateFile(
     if (!FileHandle || !ObjectAttributes)
         return STATUS_INVALID_PARAMETER;
 
+    NTSTATUS image_status;
+    if (doa1u_image_open(FileHandle, DesiredAccess, ObjectAttributes, IoStatusBlock,
+                        ShareAccess, CreateDisposition, CreateOptions, &image_status)) {
+        g_xbox_last_file_error = NT_SUCCESS(image_status) ? 0 :
+            image_status == STATUS_OBJECT_NAME_NOT_FOUND ? ERROR_FILE_NOT_FOUND :
+            image_status == STATUS_OBJECT_PATH_NOT_FOUND ? ERROR_PATH_NOT_FOUND :
+            image_status == (NTSTATUS)0xC0000043L ? ERROR_SHARING_VIOLATION : ERROR_ACCESS_DENIED;
+        return image_status;
+    }
+
     if (xbox_virtual_disk_enabled()) {
         int part=xbox_path_partition_number(get_xbox_path(ObjectAttributes));
         if (part>=0 && !(CreateOptions & XBOX_FILE_DIRECTORY_FILE)) {
@@ -382,6 +395,8 @@ NTSTATUS __stdcall xbox_NtReadFile(
         return STATUS_INVALID_PARAMETER;
 
     NTSTATUS virtual_status;
+    if (doa1u_image_read(FileHandle,Event,IoStatusBlock,Buffer,Length,ByteOffset,&virtual_status))
+        return virtual_status;
     if (xbox_virtual_disk_io(FileHandle,0,Event,IoStatusBlock,Buffer,Length,ByteOffset,&virtual_status))
         return virtual_status;
 
@@ -427,6 +442,8 @@ NTSTATUS __stdcall xbox_NtWriteFile(
         return STATUS_INVALID_PARAMETER;
 
     NTSTATUS virtual_status;
+    if (doa1u_image_write(FileHandle,Event,IoStatusBlock,&virtual_status))
+        return virtual_status;
     if (xbox_virtual_disk_io(FileHandle,1,Event,IoStatusBlock,Buffer,Length,ByteOffset,&virtual_status))
         return virtual_status;
 
@@ -458,6 +475,7 @@ NTSTATUS __stdcall xbox_NtClose(HANDLE Handle)
 {
     XBOX_TRACE(XBOX_LOG_FILE, "NtClose(handle=%p)", Handle);
     if (Handle && Handle != INVALID_HANDLE_VALUE) {
+        if (doa1u_image_close(Handle)) return STATUS_SUCCESS;
         if (xbox_virtual_disk_close(Handle)) return STATUS_SUCCESS;
         overwrite_settle(Handle);
         xbox_dir_context_drop(Handle);
@@ -470,6 +488,8 @@ NTSTATUS __stdcall xbox_NtClose(HANDLE Handle)
 NTSTATUS __stdcall xbox_NtDeleteFile(PXBOX_OBJECT_ATTRIBUTES ObjectAttributes)
 {
     WCHAR win_path[MAX_PATH];
+    NTSTATUS image_status;
+    if (doa1u_image_delete(ObjectAttributes, &image_status)) return image_status;
     if (!translate_obj_path(ObjectAttributes, win_path, MAX_PATH))
         return STATUS_OBJECT_PATH_NOT_FOUND;
     XBOX_TRACE(XBOX_LOG_FILE, "NtDeleteFile: %S", win_path);
@@ -487,6 +507,8 @@ NTSTATUS __stdcall xbox_NtQueryInformationFile(
         return STATUS_INVALID_PARAMETER;
 
     NTSTATUS virtual_status;
+    if (doa1u_image_query(FileHandle,IoStatusBlock,FileInformation,Length,FileInformationClass,0,&virtual_status))
+        return virtual_status;
     if (xbox_virtual_disk_query(FileHandle,IoStatusBlock,FileInformation,Length,FileInformationClass,0,&virtual_status))
         return virtual_status;
 
@@ -574,6 +596,8 @@ NTSTATUS __stdcall xbox_NtSetInformationFile(
         return STATUS_INVALID_PARAMETER;
 
     NTSTATUS virtual_status;
+    if (doa1u_image_query(FileHandle,IoStatusBlock,FileInformation,Length,FileInformationClass,1,&virtual_status))
+        return virtual_status;
     if (xbox_virtual_disk_query(FileHandle,IoStatusBlock,FileInformation,Length,FileInformationClass,1,&virtual_status))
         return virtual_status;
 
@@ -679,6 +703,10 @@ NTSTATUS __stdcall xbox_NtQueryVolumeInformationFile(
     if (!IoStatusBlock || !FsInformation)
         return STATUS_INVALID_PARAMETER;
 
+    NTSTATUS image_status;
+    if (doa1u_image_volume(FileHandle, IoStatusBlock, FsInformation, Length, FsInformationClass, &image_status))
+        return image_status;
+
     switch (FsInformationClass) {
         case XboxFileFsSizeInformation: {
             PXBOX_FILE_FS_SIZE_INFORMATION info = (PXBOX_FILE_FS_SIZE_INFORMATION)FsInformation;
@@ -708,6 +736,8 @@ NTSTATUS __stdcall xbox_NtQueryVolumeInformationFile(
 
 NTSTATUS __stdcall xbox_NtFlushBuffersFile(HANDLE FileHandle, PXBOX_IO_STATUS_BLOCK IoStatusBlock)
 {
+    NTSTATUS image_status;
+    if (doa1u_image_flush(FileHandle, IoStatusBlock, &image_status)) return image_status;
     if (xbox_virtual_disk_size(FileHandle,NULL)) {
         if (IoStatusBlock) { IoStatusBlock->Status=STATUS_SUCCESS; IoStatusBlock->Information=0; }
         return STATUS_SUCCESS;
@@ -729,6 +759,8 @@ NTSTATUS __stdcall xbox_NtQueryFullAttributesFile(
 
     if (!FileInformation)
         return STATUS_INVALID_PARAMETER;
+    NTSTATUS image_status;
+    if (doa1u_image_attributes(ObjectAttributes, FileInformation, &image_status)) return image_status;
     if (!translate_obj_path(ObjectAttributes, win_path, MAX_PATH))
         return STATUS_OBJECT_PATH_NOT_FOUND;
 
@@ -819,6 +851,10 @@ NTSTATUS __stdcall xbox_NtQueryDirectoryFile(
     PXBOX_FILE_DIRECTORY_INFORMATION entry;
     (void)Event; (void)ApcRoutine; (void)ApcContext;
 
+    NTSTATUS image_status;
+    if (doa1u_image_directory(FileHandle, Event, IoStatusBlock, FileInformation, Length,
+                             FileInformationClass, FileName, RestartScan, &image_status))
+        return image_status;
     if (!IoStatusBlock || !FileInformation)
         return STATUS_INVALID_PARAMETER;
     IoStatusBlock->Information = 0;
@@ -927,6 +963,8 @@ NTSTATUS __stdcall xbox_RenameFileByHandle(
     const char *name = get_xbox_path(NewName);
     DWORD n;
 
+    NTSTATUS image_status;
+    if (doa1u_image_rename(FileHandle, NewName, &image_status)) return image_status;
     if (!name || !*name)
         return STATUS_INVALID_PARAMETER;
     n = GetFinalPathNameByHandleW(FileHandle, src, MAX_PATH,
@@ -1801,6 +1839,11 @@ NTSTATUS __stdcall xbox_NtDeviceIoControlFile(
 {
     (void)FileHandle; (void)Event; (void)ApcRoutine; (void)ApcContext;
     (void)InputBuffer; (void)InputBufferLength; (void)OutputBuffer; (void)OutputBufferLength;
+#if defined(_WIN32)
+    NTSTATUS image_status;
+    if (doa1u_image_control(FileHandle, Event, IoStatusBlock, IoControlCode,
+                           OutputBuffer, OutputBufferLength, &image_status)) return image_status;
+#endif
     xbox_log(XBOX_LOG_WARN, XBOX_LOG_FILE, "NtDeviceIoControlFile(0x%X) - stub", IoControlCode);
     if (IoStatusBlock) {
         IoStatusBlock->Status = STATUS_NOT_IMPLEMENTED;

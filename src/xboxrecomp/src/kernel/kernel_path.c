@@ -14,6 +14,7 @@
 
 #include "kernel.h"
 #include "kernel_virtual_disk.h"
+#include "xbox_disc_path.h"
 #include <stdio.h>
 #include <string.h>
 #include <ctype.h>
@@ -215,6 +216,86 @@ static int resolve_symlink(const char* xbox_path, char* out, size_t out_size)
             return 1;           /* the target is somewhere we can place */
     }
     return 0;
+}
+
+/* Disc-only classification for the project-owned file adapter. Deliberately
+ * separate from xbox_path_tree: GAME also includes writable hard-disk paths.
+ * Nothing calls this from file opens until the image-routing checkpoint. */
+doa1u_disc_path_kind doa1u_classify_disc_path(const char *xbox_path,
+                                             char *relative_path, size_t capacity)
+{
+    char normalized[DOA1U_DISC_PATH_CAPACITY];
+    char linked[2][DOA1U_DISC_PATH_CAPACITY];
+    const char *p;
+    size_t length = 0, used = 0;
+    int hop, skip;
+
+    if (relative_path && capacity) relative_path[0] = 0;
+    if (!xbox_path || !relative_path || !capacity) return DOA1U_PATH_INVALID;
+    while (length < sizeof(normalized) && xbox_path[length]) ++length;
+    if (length == sizeof(normalized)) return DOA1U_PATH_INVALID;
+    for (size_t i = 0; i <= length; ++i) {
+        unsigned char c = (unsigned char)xbox_path[i];
+        if ((c && c < 32) || c == 127) return DOA1U_PATH_INVALID;
+        normalized[i] = c == '/' ? '\\' : (char)c;
+    }
+    p = normalized;
+    if (*p != '\\' && !(p[0] && p[1] == ':')) return DOA1U_PATH_RELATIVE;
+
+    for (hop = 0; hop < 8; ++hop) {
+        if (!resolve_symlink(p, linked[hop & 1], sizeof(linked[0]))) {
+            /* A registered but untranslatable/too-long target must not fall
+             * back to the static D: disc rule. Host translation owns it. */
+            const char *drive = p;
+            char link[] = "\\??\\D:";
+            if (match_prefix(drive, "\\??\\")) drive += 4;
+            if (drive[0] && drive[1] == ':') {
+                link[4] = (char)toupper((unsigned char)drive[0]);
+                const char *target = xbox_LookupSymbolicLink(link);
+                if (target && target[0]) return DOA1U_PATH_HOST;
+            }
+            break;
+        }
+        p = linked[hop & 1];
+    }
+    if (hop == 8) return DOA1U_PATH_INVALID;
+    if (match_prefix(p, "\\??\\")) p += 4;
+    skip = match_prefix(p, "\\Device\\CdRom0");
+    if (skip && (!p[skip] || p[skip] == '\\')) p += skip;
+    else if ((p[0] == 'D' || p[0] == 'd') && p[1] == ':') {
+        p += 2;
+        if (*p && *p != '\\') return DOA1U_PATH_INVALID;
+    } else return DOA1U_PATH_HOST;
+
+    while (*p) {
+        const char *start;
+        size_t count;
+        while (*p == '\\' || *p == '/') ++p;
+        start = p;
+        while (*p && *p != '\\' && *p != '/') ++p;
+        count = (size_t)(p - start);
+        if (!count || (count == 1 && start[0] == '.')) continue;
+        if ((count == 2 && start[0] == '.' && start[1] == '.') || memchr(start, ':', count)) {
+            relative_path[0] = 0;
+            return DOA1U_PATH_INVALID;
+        }
+        for (size_t i = 0; i < count; ++i) {
+            unsigned char c = (unsigned char)start[i];
+            if (c < 32 || c == 127) {
+                relative_path[0] = 0;
+                return DOA1U_PATH_INVALID;
+            }
+        }
+        if (used + (used != 0) + count >= capacity) {
+            relative_path[0] = 0;
+            return DOA1U_PATH_INVALID;
+        }
+        if (used) relative_path[used++] = '/';
+        memcpy(relative_path + used, start, count);
+        used += count;
+        relative_path[used] = 0;
+    }
+    return DOA1U_PATH_DISC;
 }
 
 /* ======================================================================== */

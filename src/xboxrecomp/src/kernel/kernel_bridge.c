@@ -27,6 +27,9 @@
 
 #include "kernel.h"
 #include "kernel_virtual_disk.h"
+#if defined(_WIN32)
+#include "xbox_image_file.h"
+#endif
 #include "guest_vmem.h"
 #include "kernel_missing.h"
 #include "xbox_memory_layout.h"
@@ -4196,6 +4199,20 @@ static NTSTATUS bridge_create_file_open(
                            file_attrs, share, disposition, options);
 
     if (NT_SUCCESS(st)) {
+#if defined(_WIN32)
+        if (doa1u_image_is_handle(h)) {
+            uint32_t token = handle_va && bridge_va_mapped(handle_va, 4)
+                ? bridge_handle_token_ex(h, 1) : 0;
+            if (!token) {
+                xbox_NtClose(h);
+                st = handle_va && bridge_va_mapped(handle_va, 4)
+                    ? STATUS_INSUFFICIENT_RESOURCES : STATUS_INVALID_PARAMETER;
+                bridge_write_iostatus(iostatus_va, st, 0);
+                return st;
+            }
+            BRIDGE_MEM32(handle_va) = token;
+        } else
+#endif
         bridge_write_handle(handle_va, h);
         bridge_write_iostatus(iostatus_va, ios.Status, (uint32_t)ios.Information);
     } else {
@@ -5011,6 +5028,10 @@ static void bridge_NtQueryDirectoryFile(void)
                 XBOX_TO_NATIVE(info_va), length, (XBOX_FILE_INFORMATION_CLASS)info_class,
                 pfn, (BOOLEAN)restart);
     bridge_write_iostatus(ios_va, ios.Status, (uint32_t)ios.Information);
+#if defined(_WIN32)
+    if (doa1u_image_is_handle(handle))
+        bridge_complete_file_io(STACK_ARG(1), STACK_ARG(2), STACK_ARG(3), ios_va);
+#endif
 }
 
 /* ── NtOpenSymbolicLinkObject (ordinal 203, 2 args = 8 bytes) */
@@ -5199,6 +5220,22 @@ static void bridge_NtDeviceIoControlFile(void)
         return;
     }
 
+#if defined(_WIN32)
+    /* Image handles are waitable OS handles, not Win32 file handles. */
+    if (doa1u_image_is_handle(bridge_resolve_handle(handle))) {
+        XBOX_IO_STATUS_BLOCK ios = {0};
+        if (!bridge_buf_ok(out_va, out_len, "NtDeviceIoControlFile")) {
+            g_eax = 0xC0000005u;
+            bridge_write_iostatus(ios_va, (NTSTATUS)g_eax, 0);
+            return;
+        }
+        g_eax = (uint32_t)xbox_NtDeviceIoControlFile(bridge_resolve_handle(handle), NULL,
+            NULL, NULL, &ios, ioctl, NULL, 0, out_va ? XBOX_TO_NATIVE(out_va) : NULL, out_len);
+        bridge_write_iostatus(ios_va, ios.Status, (uint32_t)ios.Information);
+        bridge_complete_file_io(STACK_ARG(1), STACK_ARG(2), STACK_ARG(3), ios_va);
+        return;
+    }
+#endif
     if (ioctl == IOCTL_DISK_GET_DRIVE_GEOMETRY) {
         /* DISK_GEOMETRY: Cylinders (LARGE_INTEGER), MediaType,
          * TracksPerCylinder, SectorsPerTrack, BytesPerSector -- 24 bytes. */
@@ -6506,10 +6543,9 @@ static void bridge_RtlUnicodeStringToAnsiString(void)
  * Xbox NtDuplicateObject has one process, and the handle table is ours: a
  * by-value source token in, a 4-byte guest slot for the duplicated target.
  * The source resolves through the table, DuplicateHandle produces a real
- * native handle, and the target lands via bridge_write_handle as a fresh
- * token -- same shape as NtCreateEvent. DUPLICATE_CLOSE_SOURCE also closes
- * the native handle behind the source token, which is why the source token is
- * NOT consumed here (the OS handle it wraps is gone after this call). */
+ * native handle, and the target lands as a fresh token. Managed file backends
+ * consume the old token on DUPLICATE_CLOSE_SOURCE because they close its native
+ * event themselves. A failed token allocation must close the new object. */
 static void bridge_NtDuplicateObject(void)
 {
     uint32_t target_va = STACK_ARG(1);
@@ -6517,7 +6553,7 @@ static void bridge_NtDuplicateObject(void)
     HANDLE dup = NULL;
     DWORD opts = 0;
 
-    if (!target_va) {
+    if (!target_va || !bridge_va_mapped(target_va, 4)) {
         g_eax = 0xC000000Du;   /* STATUS_INVALID_PARAMETER */
         return;
     }
@@ -6525,10 +6561,13 @@ static void bridge_NtDuplicateObject(void)
     if (STACK_ARG(2) & 0x2) opts |= DUPLICATE_SAME_ACCESS;
 
     int virtual_duplicate=0;
+    int image_duplicate=0;
 #if defined(_WIN32)
     virtual_duplicate=xbox_virtual_disk_duplicate(src,&dup,opts);
+    if (!virtual_duplicate) image_duplicate=doa1u_image_duplicate(src,&dup,opts);
 #endif
-    if ((virtual_duplicate && !dup) || (!virtual_duplicate && !DuplicateHandle(GetCurrentProcess(), src, GetCurrentProcess(),
+    int managed_duplicate=virtual_duplicate || image_duplicate;
+    if ((managed_duplicate && !dup) || (!managed_duplicate && !DuplicateHandle(GetCurrentProcess(), src, GetCurrentProcess(),
                          &dup, 0, FALSE, opts))) {
         static int logged = 0;
         if (logged++ < 8) {
@@ -6549,9 +6588,22 @@ static void bridge_NtDuplicateObject(void)
         g_eax = 0;
         return;
     }
-    if (virtual_duplicate && (opts & DUPLICATE_CLOSE_SOURCE))
+    int source_async = image_duplicate && bridge_handle_is_async(STACK_ARG(0));
+    /* Allocate before consuming the source so its token cannot immediately
+     * alias the new object or lose thread-object/async bookkeeping. */
+    uint32_t duplicate_token = bridge_handle_token_ex(dup, 1);
+    if (managed_duplicate && (opts & DUPLICATE_CLOSE_SOURCE))
         bridge_take_handle(STACK_ARG(0)); /* source event was closed by backend */
-    BRIDGE_MEM32(target_va) = bridge_handle_token_ex(dup, 1);
+    BRIDGE_MEM32(target_va) = duplicate_token;
+    if (image_duplicate && (opts & DUPLICATE_CLOSE_SOURCE))
+        bridge_forget_async_handle(STACK_ARG(0));
+    if (!BRIDGE_MEM32(target_va)) {
+        xbox_NtClose(dup);
+        if (opts & DUPLICATE_CLOSE_SOURCE) thobj_detach_token(STACK_ARG(0));
+        g_eax = STATUS_INSUFFICIENT_RESOURCES;
+        return;
+    }
+    if (source_async) bridge_note_async_handle(BRIDGE_MEM32(target_va));
     thobj_attach_token(BRIDGE_MEM32(target_va), thobj_from_token(STACK_ARG(0)));
     if (opts & DUPLICATE_CLOSE_SOURCE)
         thobj_detach_token(STACK_ARG(0));

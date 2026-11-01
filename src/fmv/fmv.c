@@ -97,7 +97,7 @@ static void close_movie(void)
 }
 
 /* 0x51B70: cdecl movie id, filename pointer table 0x2E13F8 (21 entries).
- * Retain XBOX "D:\" -> XISO mapping, including DOA1\ss_opn/end.sfd, not hardcoded IDs. */
+ * Preserve full Xbox paths for the native file API, including D:\DOA1\ss_opn/end.sfd. */
 void cri_movie_start(void) 
 {
 	uint32_t id = GMEM32(g_esp + 4);
@@ -112,17 +112,14 @@ void cri_movie_start(void)
 
 	if (gmem_ok(address)) 
 	{
-		if (GMEM8(address + 1) == ':') 
-			address += 2;
-
-		while (GMEM8(address) == '\\' || GMEM8(address) == '/') 
-			++address;
-
-		while (n < sizeof(path) - 1 && gmem_ok(address + n) && GMEM8(address + n)) 
+		while (n < sizeof(path) - 1 && gmem_ok(address + (uint32_t)n) && GMEM8(address + (uint32_t)n))
 		{
-			char c = (char)GMEM8(address + n); 
-			path[n++] = (c == '\\') ? '/' : c;
+			path[n] = (char)GMEM8(address + (uint32_t)n);
+			++n;
 		}
+		/* Missing terminator or an unmapped tail is a failed movie path, not a
+		 * truncated filename which could resolve to a different indexed file. */
+		if (!gmem_ok(address + (uint32_t)n) || GMEM8(address + (uint32_t)n)) n = 0;
 	}
 
 	path[n] = 0;
